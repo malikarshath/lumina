@@ -1,0 +1,44 @@
+{
+  "$comment": "Claude Code project settings for LUMINA. The coding agent may build freely inside the learner-owned folders and must ask before touching provided or generated ones.",
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Edit(./backend/**)",
+      "Write(./backend/**)",
+      "Edit(./web/**)",
+      "Write(./web/**)",
+      "Edit(./packages/contract/**)",
+      "Write(./packages/contract/**)",
+      "Edit(./docs/**)",
+      "Write(./docs/**)",
+      "Edit(./memory/**)",
+      "Write(./memory/**)",
+      "Edit(./scripts/**)",
+      "Write(./scripts/**)",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(node *)",
+      "Bash(curl *)",
+      "Bash(git status *)",
+      "Bash(git diff *)"
+    ],
+    "ask": [
+      "Edit(./benchmark/**)",
+      "Write(./benchmark/**)",
+      "Edit(./eval/**)",
+      "Write(./eval/**)",
+      "Edit(./quality/**)",
+      "Write(./quality/**)",
+      "Edit(./expectations.json)",
+      "Write(./expectations.json)",
+      "Bash(git push *)",
+      "Bash(fly *)",
+      "Bash(vercel *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Edit(./reports/**)",
+      "Write(./reports/**)"
+    ]
+  }
+}

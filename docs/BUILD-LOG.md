@@ -1,0 +1,286 @@
+---
+project: LUMINA
+type: build-log
+---
+
+# LUMINA build log
+
+Newest entry at the top. One entry per working session. Related: [[PROGRESS]] · [[DECISIONS]] · [[DESIGN]]
+
+Each entry answers three things: what I did, what I proved, what is next. "Proved" means a command
+ran and I read its output. If nothing was proved, say so.
+
+---
+
+## 2026-09-15 · Session 8: Next.js UI live — full stack works in the browser
+
+**Did**
+- Scaffolded `web/` (Next.js 14 App Router + Tailwind 3, no create-next-app): package.json, next.config.mjs,
+  tsconfig, postcss/tailwind config, app/globals.css, app/layout.tsx.
+- `web/lib/askStream.ts`: browser SSE reader — POST fetch, read res.body stream, buffer partial frames,
+  split on blank line, parse event:/data:, dispatch onTrace/onSources/onToken/onDone/onError.
+- `web/app/page.tsx`: client search UI — input, streams answer into state, renders trace, sources list, errors.
+  NEXT_PUBLIC_GATEWAY_URL (default http://localhost:8787), USER_ID header "malik".
+
+**Proved**
+- npm install (web) ok. All three services up (agent:8000, gateway:8787, web:3000).
+- curl localhost:3000 -> 200, title LUMINA, page compiles.
+- **Malik confirmed in the browser: query -> web search (~1937ms) -> streamed answer with sources.**
+  Full stack works end to end: UI -> gateway -> agent -> Claude+Tavily. CORS ok (gateway allows :3000).
+
+**Next (to submittable)**
+- /evals page (graded, must prove itself) — needs bench.mjs + check.mjs producing report.json (not built yet).
+- Deploy: UI to Vercel + backend (gateway+agent) to a host (Fly per PRD); set NEXT_PUBLIC_GATEWAY_URL + AGENT_URL.
+- Then real done metrics (tokens/costUsd), fetch_page, search cache, docs/RAG (Atlas), TTFT tuning.
+
+---
+
+## 2026-09-15 · Session 7: gateway live — full backend works end to end
+
+**Did**
+- Built `backend/gateway/` (Node+Express+TS, :8787): package.json (cors, express-rate-limit,
+  http-proxy-middleware, pino-http, dotenv), tsconfig, loadEnv.ts (root .env), index.ts.
+- index.ts: CORS(origin=CORS_ORIGIN), pino-http, X-Request-Id (reuse-or-mint + echo), rate limit
+  (60/min keyed by X-User-Id, IP fallback), identity gate (401 without X-User-Id except /health),
+  then createProxyMiddleware(target=AGENT_URL) forwarding everything. Deliberately NO express.json()
+  so the POST body streams intact; SSE passes straight through. Agent still validates the contract.
+
+**Proved (both services up, curl through :8787)**
+- GET /health -> 200 (no auth), contract-shaped JSON from the agent.
+- POST /threads/t1/ask without X-User-Id -> 401 (stopped at gateway, never hit agent).
+- POST with X-User-Id: real stream trace->sources(real)->tokens (Linus Torvalds answer, cited).
+- Gateway logs show x-request-id, ratelimit-* headers, CORS, content-type text/event-stream.
+
+**Architecture now running:** Browser -> Gateway :8787 (auth/rate-limit/request-id/proxy) ->
+Agent :8000 (loop/tools/LLM). The DESIGN.md two-layer split is real code.
+
+**Next**
+- Next.js UI in web/ + deploy to Vercel + the /evals page (graded). Then real done metrics
+  (tokens/costUsd from stream usage), fetch_page, search cache, docs/RAG (needs Atlas M0).
+- Note: gateway-side contract validation is currently deferred to the agent (proxy streams body).
+
+---
+
+## 2026-09-15 · Session 6: real ask loop built (Anthropic + Tavily), blocked on API key
+
+**Did**
+- Consulted the claude-api skill (TS SDK, model claude-sonnet-5, manual streaming tool-use loop pattern).
+- Added deps `@anthropic-ai/sdk` (0.68.0) + `dotenv`.
+- `src/loadEnv.ts`: loads the repo-root `.env` before any client is constructed (imported first in index.ts).
+- `src/providers/anthropic.ts`: `new Anthropic()` client + `LLM_MODEL` from env.
+- `src/tools/webSearch.ts`: `tavilySearch()` — POST api.tavily.com/search, throws on non-200 (fail loud).
+- Rewrote `src/loop/askLoop.ts` as the REAL agentic loop: `anthropic.messages.stream` per turn,
+  `stream.on("text")` -> token events, `finalMessage()` -> inspect stop_reason, execute web_search,
+  emit trace per tool call, accumulate globally-numbered sources, emit sources before first token,
+  enforce MAX_TOOL_CALLS/MAX_WALL_CLOCK (terminated "cap"), fail-loud on tool errors. done event with metrics.
+
+**Proved**
+- typecheck green.
+- End-to-end run: request validated, loop ran, called Anthropic, got 401, and returned a clean SSE
+  `error` event (status 502) — fail-loud verified (no fake answer). Pipeline works.
+- Isolated the 401 with a DIRECT curl to api.anthropic.com (app bypassed): same `API key is invalid.`
+  -> confirmed the key value is bad at the source, not our code. Key format is clean (sk-ant, 109 chars,
+  no whitespace/CR/quotes) so it's a wrong/rotated key or an account without billing.
+
+**Blocker (RESOLVED same session)**
+- Anthropic key was invalid (wrong/rotated). Malik created a NEW workspace + key and added credit.
+  Direct curl to api.anthropic.com then succeeded (108-char key), and the full LUMINA query streamed
+  a REAL cited answer: trace(web_search 3.6s) -> sources(real Tavily result: Google Cloud MCP page) ->
+  tokens(grounded answer with [1] matching source n:1) -> done(terminated "done", model claude-sonnet-5).
+  The web-search vertical slice works end to end.
+
+**Known gap to tune later**
+- ttftMs ~7027ms vs SLA 2500ms — web_search (~3.6s) runs before the first token. Optimize later
+  (search depth, thinking/effort tuning, cache). tokens/costUsd/searchCached in done still TODO stubs.
+
+**Next**
+- Gateway (:8787, no keys): X-User-Id -> 401, rate-limit, forward to agent, SSE pass-through.
+- Then Next.js UI + deploy to Vercel + /evals page (graded). Then fetch_page, search cache, docs/RAG (Atlas).
+
+---
+
+## 2026-09-15 · Session 5: agent service boots — /health live (2-day deadline)
+
+**Context**
+- Malik set a hard **2-day deadline** to finish LUMINA. Agreed to keep build-along but take bigger steps
+  (a file at a time) and build in priority order so any stopping point is a deployable slice. Keys + Atlas
+  not set up yet (he's buying accounts) → build the parts that need no external services first.
+
+**Did**
+- `backend/agent/package.json` + `tsconfig.json` (scaffolded by tutor — same pattern as contract; strict,
+  NodeNext, esModuleInterop). Deps: express, pino, pino-http, tsx, @lumina/contract (workspace link).
+- `backend/agent/src/index.ts`: Express server on AGENT_PORT (8000), pino-http request logging, and
+  `GET /health` that builds the body from env (with `?? "unconfigured"` fallbacks) and returns
+  `HealthResponse.parse(body)` — the contract validating the response on the way OUT.
+
+**Proved**
+- `npm run typecheck --workspace backend/agent` green (after fixing pino-http import: named `{ pinoHttp }`,
+  not default — NodeNext default export isn't callable).
+- Started `npm run dev`, `curl http://localhost:8000/health` -> correct contract-shaped JSON, 200, and a
+  single structured pino JSON log line for the request. Server stopped after.
+
+**Learned**
+- The contract works in reverse: `.parse()` on responses stops the service returning a wrong shape.
+- Env vars are `string | undefined`; a strict string schema throws on undefined unless you default them.
+- pino-http needs a named import under NodeNext.
+
+**Next**
+- `POST /threads/:id/ask` + the loop skeleton: stream SSE `trace -> sources -> token -> done` using the
+  AskEvent schemas, with TOOLS STUBBED (no keys needed). Then wire real Anthropic + Tavily when keys land.
+- Then gateway, then deploy. Still pending: Mongo collection schemas, Atlas cluster, .env.
+
+---
+
+## 2026-09-13 · Session 4: contract package — /ask SSE events + build
+
+**Did**
+- `src/sse.ts`: all five stream events as objects with a literal `event` discriminant —
+  `TokenEvent`, `TraceEvent`, `SourcesEvent` (array of a `Source` discriminated union: WebSource |
+  DocSource keyed on `kind`, DocSource reuses `DocumentId` + a `locator` z.object of optional
+  page/heading/line), `DoneEvent` (tokens nested z.object, top-level `terminated` enum), `ErrorEvent`
+  (`status: z.literal(502)`). Combined into `AskEvent = z.discriminatedUnion("event", [...])`.
+- `src/index.ts`: barrel file re-exporting primitives, ask, sse (with `.js` extensions).
+- Continued same session — added the rest of the HTTP routes:
+  - `documents.ts`: `DocumentStatus` enum (pending→parsing→embedding→indexed|failed), `CreateSpaceResponse`,
+    `UploadDocumentResponse` (status = z.literal("pending")), `Document`, `ListDocumentsResponse`.
+  - `threads.ts`: `CreateThreadResponse`, `Message` (role enum, sources/artifacts placeholdered z.array(z.unknown())),
+    `ThreadMessagesResponse`.
+  - `memory.ts`: `Memory`, `MemoryListResponse`.
+  - `artifacts.ts`: `ArtifactKind`/`ArtifactStatus` enums, `CreateArtifactRequest`, `CreateArtifactResponse`
+    (status = z.literal("pending")), `ArtifactStatusResponse` (full enum), `RateLimitError`.
+  - `ops.ts`: `HealthResponse`, `StatsResponse`, `EvalReport` (rubric/bench/quality/trajectories placeholdered).
+  - All wired into `index.ts`. 31 exported schemas across 8 files.
+
+**Proved**
+- `npm run typecheck` green after each schema.
+- `npm run build` (tsc) emitted 9 `dist/*.js` (+ .d.ts) — the files `package.json` main/types point at now
+  exist, so the package is consumable. Full route surface builds clean.
+
+**Learned / debugged**
+- "Move" = copy + delete: SSE events were copied into sse.ts but left in ask.ts (broken dup) → typecheck
+  failed until ask.ts was trimmed. Also: unsaved editor buffer is invisible to disk-reading tools.
+- **Green typecheck != correct contract.** Three spec bugs compiled fine: `coustUsd` typo (should be
+  costUsd), `terminated` nested inside `tokens` instead of a top-level sibling, and `z.literal("502")`
+  (string) instead of `z.literal(502)` (number). Contract correctness is verified by reading against the
+  spec field-by-field, not by a green compile.
+- Discriminated unions used at two levels (Source by `kind`, AskEvent by `event`); `z.literal` works for
+  numbers; every Zod type is a function call; nested objects need `z.object()`.
+- Recurring theme: schema = shape, code = behavior (SSE order, fail-loud), tests = proof.
+
+**Next**
+- All HTTP routes now schematised. Remaining contract work: the Mongo **collection** schemas
+  (threads, memories, chunks, cache, jobs) and tightening the placeholders (message sources/artifacts,
+  EvalReport internals). Change ops.ts placeholders from z.array(z.unknown()) → z.unknown() (rubric/bench/
+  quality are probably objects; z.array would reject them). Consider gitignoring `packages/contract/dist`.
+- Then agent service `/health` + the ask loop.
+
+---
+
+## 2026-09-10 · Session 3: contract package started (skeleton + first schemas)
+
+**Did**
+- Started `packages/contract/` (contract-first, no external deps needed).
+- `package.json`: @lumina/contract, type=module, version/main/types, build+typecheck scripts, zod + typescript deps.
+- `tsconfig.json`: strict, NodeNext, src -> dist, declaration true.
+- `src/primitives.ts`: `Mode` enum (auto|web|docs) + prefixed ID schemas (ThreadId thr_, DocumentId doc_,
+  ArtifactId art_, SpaceId spc_), each with `z.infer` type.
+- `src/ask.ts`: `AskRequest` = { query: string.min(1), mode: Mode, spaceId: SpaceId.optional() } + inferred type.
+
+**Proved**
+- `npm install --workspace packages/contract` -> added zod + typescript, 0 vulnerabilities.
+- `npm run typecheck --workspace packages/contract` (tsc --noEmit) -> clean, no errors, after each schema file.
+
+**Learned / debugged**
+- Hit a real EJSONPARSE: compilerOptions + `//` comments had been pasted into package.json. Two lessons:
+  content-in-the-right-file (compilerOptions -> tsconfig), and package.json must be strict JSON (no comments;
+  tsconfig is JSONC and tolerates them).
+- NodeNext resolution needs the `.js` extension on relative imports even from `.ts` files.
+- z.infer = single source of truth: hand-writing the TS type separately would let runtime + type drift.
+
+**Next**
+- SSE event schemas (trace, sources, token, done, error) + discriminated union (encodes the DESIGN.md
+  trace->sources->token->done order). Then wire `src/index.ts` to re-export everything (currently exports nothing).
+- Then the rest of the contract routes/collections, then agent service /health + loop.
+
+---
+
+## 2026-09-08 · Session 2: DESIGN.md completed (design gate passed)
+
+**Did**
+- Finished all five sections of [[DESIGN]] plus the appendix; flipped its status header to "Written".
+- Section 1: added the **jobs worker** as a component (was missing) and framed the `jobs` collection
+  as the mailbox between the fast API and the slow worker.
+- Section 2: added the *why* behind each boundary — keys only in the agent service (secrets never
+  reach the browser; least-exposed layer), gateway validates the contract (security wall), PDF parse
+  off the request path (too slow for the <300ms 202).
+- Section 3: wrote both flows — Flow A (ask, synchronous, SSE order trace→sources→token→done) and
+  Flow B (upload/artifact, 202-then-poll), with `jobs` as the only channel to the worker.
+- Section 4: added jobs status transitions (queued→running→done/failed), crash-safety/retry, run logs.
+- Section 5: rewrote all seven trade-offs in a consistent "chose X / gave up Y / right because Z"
+  shape — vector store, job queue, UI, Tavily vs SerpApi, full-page fetch, hard caps, read-your-write.
+- Appendix: logged assumptions (Tavily, 6h cache TTL, retry max, Atlas-M0-not-mongod) and open
+  questions for the instructor.
+
+**Proved**
+- No code run. This was design only. DESIGN.md now has no remaining TODO blocks.
+
+**Learned**
+- Recurring self-check when writing a trade-off: the "gave up" must be a downside of the option you
+  **picked**, never a flaw of the option you rejected — that flaw is your "why it's right." Caught this
+  slot-swap three times (Redis, Tavily, vector store).
+
+**Next**
+- Own-words read-through of DESIGN.md (rubric red line), then tweak voice on sections built together.
+- Create the M0 Atlas cluster; write `scripts/create-indexes.mjs`; verify the three search indexes.
+- Then start the contract package (`packages/contract/`), then the agent service `/health` + loop.
+
+---
+
+## 2026-09-06 · Session 1: spec analysis and scaffold
+
+**Did**
+- Read `PRD.md`, `AGENTS.md`, `README.md` for Assignment 1 in full.
+- Read the module's `reference/` notes and the Alex reference app, including its `run_tool_loop`.
+- Derived a full product requirements document: problem, goals, non-goals, users, stories, Given/When/Then acceptance criteria, risks, open questions, success metrics.
+- Scaffolded `Lumina/` following the Claude Code anatomy layout: `CLAUDE.md`, `.claude/{settings.json,agents,commands,skills}`, `docs/`, `memory/`, `scripts/`, plus the workspace folders `web/`, `backend/gateway/`, `backend/agent/`, `packages/contract/`, `benchmark/`, `eval/`, `quality/`.
+- Copied the three provided config files in: `sla.json`, `rubric.json`, `expectations.json`.
+- Recorded seven stack decisions in [[DECISIONS]].
+
+**Proved**
+- Nothing runs yet. No code was written. This was reading and structure only.
+
+**Learned**
+- The eight automated rubric items are storage-agnostic: they all assert through HTTP. Only the
+  5-point manual deploy item names Atlas. But `AGENTS.md` phrases five Must-level requirements in
+  MongoDB-only syntax, and the provided `create-indexes.mjs` is a Mongo script.
+- The staff scaffold has not shipped. Nothing in the assignment folder except docs and three JSON files.
+
+**Decided**
+- **MongoDB confirmed** as the database, after checking what was available. Supabase is dropped;
+  the reasoning both ways is preserved in [[DECISIONS]] D4 because ARGUS raises the same question again.
+- Still open: search provider (Tavily recommended) and whether an M0 Atlas cluster exists yet.
+
+**Next**
+- Fill in [[DESIGN]]. It blocks all code per `AGENTS.md`.
+- Create a free M0 Atlas cluster, then write `scripts/create-indexes.mjs` and verify the three
+  search indexes exist. A local `mongod` will not do: no vector search, no BM25 text index.
+
+---
+
+## Template for the next entry
+
+```markdown
+## YYYY-MM-DD · Session N: <title>
+
+**Did**
+-
+
+**Proved**
+- <command> -> <what the output showed>
+
+**Learned**
+-
+
+**Next**
+-
+```

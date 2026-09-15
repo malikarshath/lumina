@@ -1,0 +1,26 @@
+{
+  "name": "lumina",
+  "private": true,
+  "version": "0.1.0",
+  "description": "LUMINA: Perplexity-style AI search. MERN workspace: Next.js UI, Express gateway, Express agent service, MongoDB Atlas.",
+  "workspaces": [
+    "web",
+    "backend/gateway",
+    "backend/agent",
+    "packages/contract"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "echo 'TODO: concurrently run web, backend/gateway, backend/agent once they exist'",
+    "build:backend": "npm run build --workspace packages/contract && npm run build --workspace backend/agent && npm run build --workspace backend/gateway",
+    "start:prod": "node scripts/start-prod.mjs",
+    "worker": "echo 'TODO: run the jobs worker as a separate process (backend/agent)'",
+    "lint": "echo 'TODO: eslint across workspaces'",
+    "typecheck": "echo 'TODO: tsc --noEmit across workspaces'",
+    "bench": "node benchmark/bench.mjs",
+    "check": "node quality/check.mjs .",
+    "export:runs": "echo 'TODO: dump the runs collection into runs/ for a deployed instance'"
+  }
+}
