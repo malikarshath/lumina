@@ -1,0 +1,119 @@
+{
+  "assignment": "LUMINA",
+  "generatedAt": "2026-09-15T13:23:27.227Z",
+  "target": "http://localhost:8787",
+  "scope": "web-search slice (docs/RAG, memory, artifacts not yet included)",
+  "bench": {
+    "ttftP95Ms": 7066,
+    "answerP95Ms": 16544,
+    "avgCostUsd": 0.029476,
+    "maxCostUsd": 0.043975,
+    "errorRatePct": 0,
+    "capRatePct": 0,
+    "n": 6
+  },
+  "checks": [
+    {
+      "metric": "TTFT p95 (ms)",
+      "measured": 7066,
+      "target": 2500,
+      "pass": false,
+      "dir": "<="
+    },
+    {
+      "metric": "Answer p95 (ms)",
+      "measured": 16544,
+      "target": 12000,
+      "pass": false,
+      "dir": "<="
+    },
+    {
+      "metric": "Cost per answer ($)",
+      "measured": 0.043975,
+      "target": 0.05,
+      "pass": true,
+      "dir": "<="
+    },
+    {
+      "metric": "Error rate (%)",
+      "measured": 0,
+      "target": 1,
+      "pass": true,
+      "dir": "<="
+    }
+  ],
+  "samples": [
+    {
+      "query": "What is the Model Context Protocol?",
+      "ok": true,
+      "ttftMs": 6193,
+      "latencyMs": 13713,
+      "costUsd": 0.029198,
+      "terminated": "done",
+      "tokens": {
+        "in": 2826,
+        "out": 848
+      }
+    },
+    {
+      "query": "Who founded Anthropic?",
+      "ok": true,
+      "ttftMs": 4997,
+      "latencyMs": 7240,
+      "costUsd": 0.023858,
+      "terminated": "done",
+      "tokens": {
+        "in": 3686,
+        "out": 320
+      }
+    },
+    {
+      "query": "What is Next.js used for?",
+      "ok": true,
+      "ttftMs": 4313,
+      "latencyMs": 11284,
+      "costUsd": 0.029036,
+      "terminated": "done",
+      "tokens": {
+        "in": 3137,
+        "out": 775
+      }
+    },
+    {
+      "query": "When was TypeScript first released?",
+      "ok": true,
+      "ttftMs": 5492,
+      "latencyMs": 6809,
+      "costUsd": 0.022109,
+      "terminated": "done",
+      "tokens": {
+        "in": 3753,
+        "out": 190
+      }
+    },
+    {
+      "query": "What is Retrieval-Augmented Generation?",
+      "ok": true,
+      "ttftMs": 7066,
+      "latencyMs": 16544,
+      "costUsd": 0.043975,
+      "terminated": "done",
+      "tokens": {
+        "in": 3740,
+        "out": 1117
+      }
+    },
+    {
+      "query": "What is Vercel?",
+      "ok": true,
+      "ttftMs": 4833,
+      "latencyMs": 11635,
+      "costUsd": 0.028679,
+      "terminated": "done",
+      "tokens": {
+        "in": 3293,
+        "out": 720
+      }
+    }
+  ]
+}

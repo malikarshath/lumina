@@ -45,6 +45,9 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
   let step = 0;
   let sourcesSent = false;
   let terminated: "done" | "cap" = "done";
+  let inTok = 0;
+  let outTok = 0;
+  let searchCalls = 0;
 
   // Sources accumulate across tool calls; emitted once, before the first token.
   const sources: Array<{
@@ -89,6 +92,8 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
     });
 
     const msg = await stream.finalMessage();
+    inTok += msg.usage?.input_tokens ?? 0;
+    outTok += msg.usage?.output_tokens ?? 0;
 
     // The model produced its final answer (no more tools) -> done.
     if (msg.stop_reason === "end_turn") break;
@@ -109,6 +114,7 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
       try {
         if (t.name === "web_search") {
           const q = (t.input as { query: string }).query;
+          searchCalls++;
           const found = await tavilySearch(q);
           const startN = sources.length;
           for (const r of found) {
@@ -170,6 +176,11 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
   }
 
   ensureSourcesSent(); // covers the "answered with no tools" path
+
+  // Cost model mirrors benchmark/sla.json cost_model (USD per million tokens + per search).
+  const costUsd =
+    (inTok / 1e6) * 3.0 + (outTok / 1e6) * 15.0 + searchCalls * 0.008;
+
   emit(
     "done",
     DoneEvent.parse({
@@ -178,8 +189,8 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
       latencyMs: Date.now() - start,
       ttftMs,
       model: LLM_MODEL,
-      tokens: { in: 0, out: 0 }, // TODO: sum from stream usage
-      costUsd: 0, // TODO: compute from usage + sla cost model
+      tokens: { in: inTok, out: outTok },
+      costUsd: Number(costUsd.toFixed(6)),
       searchCached: false, // TODO: wire the search cache
       terminated,
     }),

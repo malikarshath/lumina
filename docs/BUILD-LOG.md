@@ -12,7 +12,34 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
-## 2026-09-15 · Session 8: Next.js UI live — full stack works in the browser
+## 2026-09-15 · Session 9: deploy prep — production build + runbook
+
+**Did**
+- Made the backend production-ready: gateway reads `process.env.PORT` (host-injected) with GATEWAY_PORT
+  fallback; `scripts/start-prod.mjs` runs agent (:8000) + gateway (:$PORT) in one process; root scripts
+  `build:backend` and `start:prod`.
+- Wrote `docs/DEPLOY.md`: Vercel (web) + Render (combined backend) runbook, env var list, CORS loop.
+- `git init` inside Lumina/ + first commit (82 files; verified .env, node_modules, dist, .next all excluded).
+
+**Proved**
+- All four workspaces `build` clean for production (tsc x3 + next build).
+- Ran the combined prod launcher on PORT=8080: /health 200 and full ask stream worked; x-request-id
+  propagated across gateway->agent. Deployable.
+
+**Handoff**
+- Malik pushed the repo from a different system and will run Render + Vercel from there. Reminded him the
+  pushed copy must include start-prod.mjs, root build:backend/start:prod scripts, and the gateway PORT fix.
+
+**Next**
+- Deploy backend to Render, UI to Vercel, close CORS loop; verify the live URL streams.
+- Then /evals page + bench.mjs/check.mjs (report.json), real done metrics, fetch_page, cache, docs/RAG (Atlas).
+
+**Update (same day): DEPLOYED + VERIFIED LIVE.** Backend on Render (https://lumina-fb9s.onrender.com),
+UI on Vercel, CORS_ORIGIN set. Tutor verified from outside: GET /health -> 200 (model claude-sonnet-5,
+searchProvider tavily; vectorStore "unconfigured" since VECTOR_BACKEND unset — fine, no RAG yet).
+POST /ask on prod streamed a real cited answer (Tavily search 2720ms -> Wikipedia source -> tokens).
+401 without X-User-Id confirmed in prod. The deployed URL requirement is MET.
+Pending: confirm Vercel UI in browser; build the graded /evals page.
 
 **Did**
 - Scaffolded `web/` (Next.js 14 App Router + Tailwind 3, no create-next-app): package.json, next.config.mjs,
