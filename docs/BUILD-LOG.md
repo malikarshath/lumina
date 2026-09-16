@@ -12,6 +12,28 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-16 · Session 14: docs UI + long-term memory
+
+**Did**
+- UI: mode toggle (auto/web/docs), document upload + space panel (localStorage spaceId, poll to indexed),
+  askStream now sends spaceId. web/lib/api.ts (createSpace/uploadDoc/listDocs). Verified deployed /health
+  db:ok after Malik set Render env (OPENAI/MONGODB/VECTOR_BACKEND) -> RAG live in prod.
+- Memory: rag/memory.ts (saveMemory/recallMemory/listMemories/deleteMemory) using in-JS cosine over stored
+  embeddings (M0 caps Atlas Search indexes at ~3, spent on chunks; per-user memory sets are small).
+  Added recall_memory + save_memory tools (always active, all modes) + userId threaded into runAskLoop.
+  routes/memory.ts (GET /memory, DELETE /memory/:id). formatSources helper.
+
+**Proved**
+- Local: "remember my favorite language is Rust" -> save_memory trace + stored; GET /memory lists it;
+  NEW thread "what's my favorite language?" -> recall_memory -> "Your favorite programming language is Rust."
+  Cross-session memory works. Pushed cc7d08d (+ docs UI be48b66).
+
+**Next**
+- UI polish for memory (view/delete) if wanted. Remaining/deferred: BM25 hybrid, GridFS large files,
+  Mongo collection schemas in the contract package, artifacts (decks/images), fetch_page, own-words DESIGN.md.
+
+---
+
 ## 2026-09-16 · Session 13: document RAG works end to end
 
 **Did**
