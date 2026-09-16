@@ -9,25 +9,38 @@ import {
 } from "@lumina/contract";
 import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
 import { tavilySearch } from "../tools/webSearch.js";
+import { searchDocuments } from "../rag/search.js";
 
 type Emit = (event: string, data: unknown) => void;
 
 const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS) || 8;
 const MAX_WALL_CLOCK_MS = (Number(process.env.MAX_WALL_CLOCK_SEC) || 90) * 1000;
 
-const SYSTEM = `You are LUMINA, a web research assistant.
-Use the web_search tool to find current information before answering.
+const SYSTEM = `You are LUMINA, a research assistant.
+Use web_search for current/web information, and search_documents for questions
+about the user's uploaded files. You may use both. Search before answering.
 Write a concise, accurate answer and cite every factual claim with [n],
 where n matches the numbered sources you were given in tool results.
 If search returned nothing useful, say so plainly and cite nothing.
 Never invent a citation or a source.`;
 
-// One custom tool: web_search. (fetch_page, search_documents, memory come later.)
 const tools: Anthropic.Tool[] = [
   {
     name: "web_search",
     description:
       "Search the web for current information. Returns numbered results with titles, snippets, and URLs.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "the search query" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "search_documents",
+    description:
+      "Search the user's uploaded documents in the current space. Use for questions about their files. Returns numbered results.",
     input_schema: {
       type: "object",
       properties: {
@@ -50,13 +63,25 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
   let searchCalls = 0;
 
   // Sources accumulate across tool calls; emitted once, before the first token.
-  const sources: Array<{
+  type WebSrc = { n: number; kind: "web"; title: string; url: string; snippet: string };
+  type DocSrc = {
     n: number;
-    kind: "web";
+    kind: "doc";
+    docId: string;
     title: string;
-    url: string;
     snippet: string;
-  }> = [];
+    locator: { line?: number; page?: number; heading?: string };
+  };
+  const sources: Array<WebSrc | DocSrc> = [];
+
+  // Honor the request mode: web -> web only, docs -> documents only, auto -> both.
+  const activeTools = tools.filter((t) =>
+    req.mode === "web"
+      ? t.name === "web_search"
+      : req.mode === "docs"
+        ? t.name === "search_documents"
+        : true,
+  );
 
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: req.query },
@@ -80,7 +105,7 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
       model: LLM_MODEL,
       max_tokens: 2048,
       system: SYSTEM,
-      tools,
+      tools: activeTools,
       messages,
       // Low effort = minimal thinking before the first token -> lower TTFT.
       // Keeps tool-calling reliable (web_search still fires), unlike disabling thinking.
@@ -116,11 +141,12 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
       toolCalls++;
       const t0 = Date.now();
       try {
+        const q = (t.input as { query: string }).query;
+        const startN = sources.length;
+
         if (t.name === "web_search") {
-          const q = (t.input as { query: string }).query;
           searchCalls++;
           const found = await tavilySearch(q);
-          const startN = sources.length;
           for (const r of found) {
             sources.push({
               n: sources.length + 1,
@@ -130,30 +156,50 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
               snippet: r.snippet,
             });
           }
-          emit(
-            "trace",
-            TraceEvent.parse({
-              event: "trace",
-              step,
-              tool: "web_search",
-              input: { query: q },
-              ok: true,
-              ms: Date.now() - t0,
-            }),
-          );
-          // Feed the model the numbered results so it can cite [n].
-          const numbered = sources
-            .slice(startN)
-            .map((s) => `[${s.n}] ${s.title}\n${s.snippet}\n${s.url}`)
-            .join("\n\n");
-          results.push({
-            type: "tool_result",
-            tool_use_id: t.id,
-            content: numbered || "No results found.",
-          });
+        } else if (t.name === "search_documents") {
+          if (!req.spaceId) {
+            throw new Error("no document space selected for this request");
+          }
+          const hits = await searchDocuments(req.spaceId, q, 5);
+          for (const hcap of hits) {
+            sources.push({
+              n: sources.length + 1,
+              kind: "doc",
+              docId: hcap.docId,
+              title: hcap.title,
+              snippet: hcap.text.slice(0, 300),
+              locator: hcap.locator,
+            });
+          }
         } else {
           throw new Error(`unknown tool: ${t.name}`);
         }
+
+        emit(
+          "trace",
+          TraceEvent.parse({
+            event: "trace",
+            step,
+            tool: t.name,
+            input: { query: q },
+            ok: true,
+            ms: Date.now() - t0,
+          }),
+        );
+        // Feed the model the numbered results so it can cite [n].
+        const numbered = sources
+          .slice(startN)
+          .map((s) =>
+            s.kind === "web"
+              ? `[${s.n}] ${s.title}\n${s.snippet}\n${s.url}`
+              : `[${s.n}] ${s.title}\n${s.snippet}`,
+          )
+          .join("\n\n");
+        results.push({
+          type: "tool_result",
+          tool_use_id: t.id,
+          content: numbered || "No results found.",
+        });
       } catch (err) {
         // Fail loud: mark the trace ok:false with a non-empty error.
         emit(
