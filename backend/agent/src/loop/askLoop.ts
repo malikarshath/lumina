@@ -9,6 +9,8 @@ import {
 } from "@lumina/contract";
 import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
 import { tavilySearch } from "../tools/webSearch.js";
+import { getCached, setCached } from "../tools/searchCache.js";
+import { fetchPage } from "../tools/fetchPage.js";
 import { searchDocuments } from "../rag/search.js";
 import { recallMemory, saveMemory } from "../rag/memory.js";
 
@@ -17,15 +19,16 @@ type Emit = (event: string, data: unknown) => void;
 const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS) || 8;
 const MAX_WALL_CLOCK_MS = (Number(process.env.MAX_WALL_CLOCK_SEC) || 90) * 1000;
 
-const SYSTEM = `You are LUMINA, a research assistant.
-Use web_search for current/web information, and search_documents for questions
-about the user's uploaded files. You may use both. Search before answering.
-Use recall_memory when prior context about the user would help, and save_memory
-to remember durable facts (preferences, identity, ongoing projects) for future sessions.
-Write a concise, accurate answer and cite every factual claim with [n],
-where n matches the numbered sources you were given in tool results.
-If search returned nothing useful, say so plainly and cite nothing.
-Never invent a citation or a source.`;
+const SYSTEM = `You are LUMINA, a research assistant. Ground every answer in retrieved
+sources — never answer from your own prior knowledge without retrieving first.
+In web/auto mode you MUST call web_search, then fetch_page on the results you will
+cite, before writing the answer. In docs mode use search_documents. This applies even
+to questions you think you know.
+Use recall_memory when prior context about the user would help, and save_memory to
+remember durable facts (preferences, identity, ongoing projects) for future sessions.
+Write a concise, accurate answer and cite every factual claim with [n], where n matches
+the numbered sources you were given in tool results.
+If retrieval returned nothing useful, say so plainly and cite nothing. Never invent a citation.`;
 
 const tools: Anthropic.Tool[] = [
   {
@@ -38,6 +41,16 @@ const tools: Anthropic.Tool[] = [
         query: { type: "string", description: "the search query" },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "fetch_page",
+    description:
+      "Fetch the full text of a web page by URL to ground your answer in the actual source. Use after web_search on the results you intend to cite, instead of relying on snippets alone.",
+    input_schema: {
+      type: "object",
+      properties: { url: { type: "string", description: "the page URL to fetch" } },
+      required: ["url"],
     },
   },
   {
@@ -97,6 +110,7 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
   let inTok = 0;
   let outTok = 0;
   let searchCalls = 0;
+  let searchCached = false;
 
   // Sources accumulate across tool calls; emitted once, before the first token.
   type WebSrc = { n: number; kind: "web"; title: string; url: string; snippet: string };
@@ -114,9 +128,9 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
   // web -> web only, docs -> documents only, auto -> both.
   const activeTools = tools.filter((t) => {
     if (t.name === "recall_memory" || t.name === "save_memory") return true;
-    if (req.mode === "web") return t.name === "web_search";
+    if (req.mode === "web") return t.name === "web_search" || t.name === "fetch_page";
     if (req.mode === "docs") return t.name === "search_documents";
-    return true; // auto
+    return true; // auto: all
   });
 
   const messages: Anthropic.MessageParam[] = [
@@ -182,8 +196,14 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
 
         if (t.name === "web_search") {
           const q = (t.input as { query: string }).query;
-          searchCalls++;
-          const found = await tavilySearch(q);
+          let found = await getCached(q);
+          if (found) {
+            searchCached = true; // served from cache — no Tavily call, no cost
+          } else {
+            searchCalls++;
+            found = await tavilySearch(q);
+            await setCached(q, found);
+          }
           for (const r of found) {
             sources.push({
               n: sources.length + 1,
@@ -193,7 +213,17 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
               snippet: r.snippet,
             });
           }
-          resultText = formatSources(sources.slice(startN));
+          // Return titles + URLs only (no content) so the model must fetch_page
+          // the results it will cite — grounding in the real page, not snippets.
+          resultText =
+            sources
+              .slice(startN)
+              .map((s) => `[${s.n}] ${s.title} — ${(s as { url?: string }).url}`)
+              .join("\n") +
+            "\n\nCall fetch_page(url) on the results you will cite to read the full page before answering.";
+        } else if (t.name === "fetch_page") {
+          const url = (t.input as { url: string }).url;
+          resultText = await fetchPage(url);
         } else if (t.name === "search_documents") {
           const q = (t.input as { query: string }).query;
           if (!req.spaceId) {
@@ -282,7 +312,7 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
       model: LLM_MODEL,
       tokens: { in: inTok, out: outTok },
       costUsd: Number(costUsd.toFixed(6)),
-      searchCached: false, // TODO: wire the search cache
+      searchCached,
       terminated,
     }),
   );
