@@ -12,6 +12,32 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-16 · Session 13: document RAG works end to end
+
+**Did**
+- OpenAI credits added; verified embeddings (text-embedding-3-small, 1536 dims). Deps: openai, multer, pdf-parse.
+- providers/openai.ts (embed), rag/chunk.ts (char-window + line locator), rag/search.ts ($vectorSearch on
+  chunks scoped by spaceId), worker/worker.ts (poll jobs, claim atomically, parse->chunk->embed->store->
+  read-your-write probe->indexed, retry up to 3), routes/spaces.ts (POST /spaces, POST upload multipart ->202
+  ->enqueue job, GET documents), pdf-parse.d.ts ambient types.
+- askLoop: added search_documents tool + doc-source handling (broadened sources to web|doc union); mode-based
+  tool routing (web->web_search, docs->search_documents, auto->both). index.ts mounts spacesRouter + starts
+  the worker (guarded by isDbConfigured).
+
+**Proved**
+- Full local run: created space, uploaded zephyr.txt (fictional facts), worker indexed it (status pending->
+  indexed, pct 100, probe passed). Asked a docs question (mode:docs) -> trace search_documents -> doc source
+  (locator line:1) -> answer grounded ENTIRELY in the file ("Dr. Aria Chen ... childhood cat Zephyr [1]").
+  First attempt used web_search (mode not enforced) -> fixed with mode-based tool routing; re-test correct.
+- Pushed d13cd14.
+
+**Next**
+- Set Render env for deployed RAG: OPENAI_API_KEY, MONGODB_URI, MONGODB_DB=lumina, VECTOR_BACKEND=atlas-vector-search.
+- Wire doc ingestion + space picker into the Next.js UI. Then memory (recall/save), BM25 hybrid, GridFS for
+  large files, Mongo collection schemas in the contract, artifacts (decks/images), own-words DESIGN.md read-through.
+
+---
+
 ## 2026-09-16 · Session 12: MongoDB Atlas wired — collections + indexes created
 
 **Did**
