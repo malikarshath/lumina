@@ -12,6 +12,35 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-16 · Session 15: fetch_page + search cache (grounding polish, rubric-driven)
+
+**Did**
+- Read eval/rubric.json to prioritize by points. Targeted "Search & cited answers" (20 pts).
+- tools/searchCache.ts: two-tier cache (in-process LRU + Mongo `cache` w/ TTL index), best-effort, guarded
+  by isDbConfigured. Wired into web_search: hit -> searchCached=true, no Tavily call, no cost; done.searchCached real.
+- tools/fetchPage.ts: fetch a URL, strip HTML to text (no dep), 8s timeout. Added fetch_page tool (web/auto).
+  web_search tool-result now returns TITLES + URLs only (no snippet content) so the model MUST fetch_page the
+  results it cites -> grounding in the real page, not snippets. Strengthened SYSTEM to mandate retrieve-before-answer.
+- bench.mjs: cold + warm passes; cacheHitRatePct metric + SLA check (min_search_cache_hit_rate_pct); exits
+  non-zero if any gate fails.
+
+**Proved (local + deployed)**
+- Trace now shows web_search -> fetch_page (e.g. fetched en.wikipedia.org/wiki/Mount_Fuji); answer grounded in it.
+- Repeat query -> searchCached:true, search ms:0. Deployed cold+warm bench: cache hit 66.7% PASS (>=50),
+  cost $0.048 PASS (close), errors 0% PASS; TTFT p95 11.4s / answer 19.5s FAIL (honest cost of forced fetch).
+- Pushed 7be25fb, f3270af, 25d4b11; /evals refreshed.
+
+**Trade-off logged:** forcing search+fetch on every web query = real grounding (red line + 20 pts) but worse
+latency gates (10 pts). Chose grounding. TTFT ≤2.5s remains unachievable with a live search+fetch before the
+first token — documented, not gamed.
+
+**Next (remaining rubric gaps):** artifacts (POST /artifacts deck+image, 20 pts) — needs pptx + gpt-image-1 +
+IMAGE_DAILY_CAP + DRY_RUN; /stats + per-answer run logs + quality/check.mjs (observability 5 + perf 10);
+status codes 404/413/501 (contract 10); eval/gold rag_gold.jsonl + eval.mjs recallAt5 (part of RAG 15);
+/evals full success+failing trajectories + design 5-questions (manual 10). fetch_page page-size tuning for cost headroom.
+
+---
+
 ## 2026-09-16 · Session 14: docs UI + long-term memory
 
 **Did**
