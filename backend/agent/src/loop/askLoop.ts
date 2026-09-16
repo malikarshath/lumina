@@ -10,6 +10,7 @@ import {
 import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
 import { tavilySearch } from "../tools/webSearch.js";
 import { searchDocuments } from "../rag/search.js";
+import { recallMemory, saveMemory } from "../rag/memory.js";
 
 type Emit = (event: string, data: unknown) => void;
 
@@ -19,6 +20,8 @@ const MAX_WALL_CLOCK_MS = (Number(process.env.MAX_WALL_CLOCK_SEC) || 90) * 1000;
 const SYSTEM = `You are LUMINA, a research assistant.
 Use web_search for current/web information, and search_documents for questions
 about the user's uploaded files. You may use both. Search before answering.
+Use recall_memory when prior context about the user would help, and save_memory
+to remember durable facts (preferences, identity, ongoing projects) for future sessions.
 Write a concise, accurate answer and cite every factual claim with [n],
 where n matches the numbered sources you were given in tool results.
 If search returned nothing useful, say so plainly and cite nothing.
@@ -49,9 +52,42 @@ const tools: Anthropic.Tool[] = [
       required: ["query"],
     },
   },
+  {
+    name: "recall_memory",
+    description:
+      "Recall durable facts you previously saved about this user. Use when personalization or prior context helps.",
+    input_schema: {
+      type: "object",
+      properties: { query: { type: "string", description: "what to recall" } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "save_memory",
+    description:
+      "Save a durable fact about the user for future sessions (preferences, identity, ongoing projects). Use sparingly.",
+    input_schema: {
+      type: "object",
+      properties: { text: { type: "string", description: "the fact to remember" } },
+      required: ["text"],
+    },
+  },
 ];
 
-export async function runAskLoop(req: AskRequest, emit: Emit) {
+// Numbered source lines fed back to the model so it can cite [n].
+function formatSources(
+  items: Array<{ n: number; kind: "web" | "doc"; title: string; snippet: string; url?: string }>,
+): string {
+  return items
+    .map((s) =>
+      s.kind === "web"
+        ? `[${s.n}] ${s.title}\n${s.snippet}\n${s.url}`
+        : `[${s.n}] ${s.title}\n${s.snippet}`,
+    )
+    .join("\n\n");
+}
+
+export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
   const start = Date.now();
   let ttftMs = 0;
   let toolCalls = 0;
@@ -74,14 +110,14 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
   };
   const sources: Array<WebSrc | DocSrc> = [];
 
-  // Honor the request mode: web -> web only, docs -> documents only, auto -> both.
-  const activeTools = tools.filter((t) =>
-    req.mode === "web"
-      ? t.name === "web_search"
-      : req.mode === "docs"
-        ? t.name === "search_documents"
-        : true,
-  );
+  // Memory tools are always available; search tools follow the request mode:
+  // web -> web only, docs -> documents only, auto -> both.
+  const activeTools = tools.filter((t) => {
+    if (t.name === "recall_memory" || t.name === "save_memory") return true;
+    if (req.mode === "web") return t.name === "web_search";
+    if (req.mode === "docs") return t.name === "search_documents";
+    return true; // auto
+  });
 
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: req.query },
@@ -141,10 +177,11 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
       toolCalls++;
       const t0 = Date.now();
       try {
-        const q = (t.input as { query: string }).query;
         const startN = sources.length;
+        let resultText: string;
 
         if (t.name === "web_search") {
+          const q = (t.input as { query: string }).query;
           searchCalls++;
           const found = await tavilySearch(q);
           for (const r of found) {
@@ -156,7 +193,9 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
               snippet: r.snippet,
             });
           }
+          resultText = formatSources(sources.slice(startN));
         } else if (t.name === "search_documents") {
+          const q = (t.input as { query: string }).query;
           if (!req.spaceId) {
             throw new Error("no document space selected for this request");
           }
@@ -171,6 +210,17 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
               locator: hcap.locator,
             });
           }
+          resultText = formatSources(sources.slice(startN));
+        } else if (t.name === "recall_memory") {
+          const q = (t.input as { query: string }).query;
+          const mems = await recallMemory(userId, q, 5);
+          resultText = mems.length
+            ? mems.map((m) => `(memory) ${m.text}`).join("\n")
+            : "No relevant memories saved.";
+        } else if (t.name === "save_memory") {
+          const text = (t.input as { text: string }).text;
+          await saveMemory(userId, text);
+          resultText = "Saved to memory.";
         } else {
           throw new Error(`unknown tool: ${t.name}`);
         }
@@ -181,24 +231,15 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
             event: "trace",
             step,
             tool: t.name,
-            input: { query: q },
+            input: t.input,
             ok: true,
             ms: Date.now() - t0,
           }),
         );
-        // Feed the model the numbered results so it can cite [n].
-        const numbered = sources
-          .slice(startN)
-          .map((s) =>
-            s.kind === "web"
-              ? `[${s.n}] ${s.title}\n${s.snippet}\n${s.url}`
-              : `[${s.n}] ${s.title}\n${s.snippet}`,
-          )
-          .join("\n\n");
         results.push({
           type: "tool_result",
           tool_use_id: t.id,
-          content: numbered || "No results found.",
+          content: resultText || "No results found.",
         });
       } catch (err) {
         // Fail loud: mark the trace ok:false with a non-empty error.

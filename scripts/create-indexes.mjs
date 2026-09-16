@@ -57,6 +57,10 @@ try {
     },
   }).then((n) => console.log(`  + chunks.${n} (vectorSearch)`)).catch(ignoreExists("chunks vector_index"));
 
+  // NOTE: memory recall ranks with in-JS cosine similarity over stored embeddings
+  // (per-user sets are small), so it needs no Atlas Search index — the M0 tier
+  // caps the number of search indexes, and we spend them on chunks (vector + BM25).
+
   // Text (BM25) index for hybrid search.
   await db.collection("chunks").createSearchIndex({
     name: "text_index",

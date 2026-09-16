@@ -4,6 +4,7 @@ import { pinoHttp } from "pino-http";
 import { HealthResponse } from "@lumina/contract";
 import { askRouter } from "./routes/ask.js";
 import { spacesRouter } from "./routes/spaces.js";
+import { memoryRouter } from "./routes/memory.js";
 import { dbStatus, isDbConfigured } from "./db/mongo.js";
 import { startWorker } from "./worker/worker.js";
 
@@ -12,6 +13,7 @@ app.use(express.json());
 app.use(pinoHttp()); // one structured JSON log line per request
 app.use(askRouter);
 app.use(spacesRouter);
+app.use(memoryRouter);
 
 app.get("/health", async (_req, res) => {
   // env vars are `string | undefined`; the contract requires strings,

@@ -12,9 +12,11 @@ askRouter.post("/threads/:id/ask", async (req, res) => {
     return res.status(400).json({ error: parsed.error.message });
   }
 
+  const userId = String(req.headers["x-user-id"] || "anon");
+
   sseInit(res);
   try {
-    await runAskLoop(parsed.data, (event, data) => sseSend(res, event, data));
+    await runAskLoop(parsed.data, (event, data) => sseSend(res, event, data), userId);
   } catch (err) {
     // Fail loud: an error event instead of done, never a fake answer.
     sseSend(res, "error", { event: "error", status: 502, error: String(err) });
