@@ -12,6 +12,57 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-16 · Session 11: latency tuning — effort:low (3/4 SLA gates pass)
+
+**Did**
+- Added `output_config: { effort: "low" }` to the messages.stream call (passed via spread cast since
+  SDK 0.68 doesn't type output_config yet; the API honors it). Minimal thinking before first token,
+  keeps tool-calling reliable (vs disabling thinking).
+
+**Proved**
+- Deployed re-benchmark (Render redeploy confirmed via probe: cost $0.0206, out 132 tok):
+  TTFT p95 6952->3329ms (-52%), answer p95 15674->9166ms (now PASS), cost $0.046->$0.028, errors 0%.
+  Now 3/4 gates PASS (only TTFT fails, 3329 vs 2500 — the ~2s web search before first token is the gap).
+- Pushed askLoop change (4b654f9) + refreshed report.json (b6da3a7); Vercel refreshes /evals.
+
+**TTFT follow-up (same session):** tried front-loading one web search before the model turn to cut a
+round-trip; measured TTFT p95 ~3.2s — still over 2500. Concluded TTFT ≤2.5s is an architectural floor
+for grounded answers: the first token cannot precede the ~2s web search without emitting ungrounded
+text (violates grounded-or-nothing + evidence-over-vibes). Chose Option B: REVERTED the front-load to
+preserve the agentic "model decides to search" design; TTFT is the same either way. Kept effort:low.
+Deployed state unchanged (still 4b654f9 agent-decides+effort:low; /evals accurate: 3/4 gates pass,
+TTFT ~3.3s documented honestly as a search-latency limit).
+
+**Next**
+- Atlas M0 being provisioned. Then create-indexes.mjs (vector + text), docs/RAG (search_documents),
+  Mongo collection schemas, memory (recall/save), search cache (also the cache-hit-rate gate), fetch_page.
+
+---
+
+## 2026-09-16 · Session 10: /evals page + real benchmark (deployed)
+
+**Did**
+- Wired real metrics into the done event: sum msg.usage input/output tokens across turns; costUsd from
+  the sla.json cost model (in 3.0 + out 15.0 per MTok + 0.008/search). tokens/costUsd now real.
+- `benchmark/bench.mjs`: fires 6 web queries at a target gateway (TARGET env or sla.json), parses SSE,
+  records ttft/latency/cost/terminated/errors, aggregates p95s, compares to sla gates, writes
+  reports/report.json + web/public/report.json, prints PASS/FAIL.
+- `web/app/evals/page.tsx`: client page fetches /report.json, renders design summary + SLA checks table
+  (PASS/FAIL badges) + per-query samples. Honest scope note (web slice; docs/RAG not included).
+
+**Proved**
+- Pushed to GitHub (Malik set up a PAT in macOS keychain: repo scope / Contents:RW). Render auto-redeployed;
+  probe of deployed /ask returned real costUsd 0.018908, tokens in2836/out160.
+- Ran bench against DEPLOYED backend (https://lumina-fb9s.onrender.com): cost PASS (max $0.046 <= 0.05),
+  error rate PASS (0%). TTFT p95 ~6952ms and answer p95 ~15674ms FAIL vs 2500/12000 — honest (search before
+  first token + Sonnet adaptive thinking). Committed+pushed report.json (d2b230c); Vercel redeploys /evals.
+
+**Next**
+- Verify deployed /evals renders (need Vercel URL). Then TTFT/latency tuning (effort:low or disable thinking,
+  snippet-first), fetch_page, search cache, real searchCached, docs/RAG + Atlas.
+
+---
+
 ## 2026-09-15 · Session 9: deploy prep — production build + runbook
 
 **Did**
