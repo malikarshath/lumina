@@ -24,11 +24,14 @@ export async function askStream(
   mode: string,
   userId: string,
   h: AskHandlers,
+  spaceId?: string,
 ) {
+  const body: Record<string, unknown> = { query, mode };
+  if (spaceId) body.spaceId = spaceId;
   const res = await fetch(`${gatewayUrl}/threads/${threadId}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-User-Id": userId },
-    body: JSON.stringify({ query, mode }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok || !res.body) {
