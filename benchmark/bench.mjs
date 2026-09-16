@@ -146,3 +146,6 @@ console.log("\n=== SLA checks ===");
 for (const c of checks) {
   console.log(`  ${c.pass ? "PASS" : "FAIL"}  ${c.metric}: ${c.measured} ${c.dir} ${c.target}`);
 }
+
+// Exit non-zero if any gate failed, so CI / the grader sees an honest signal.
+process.exitCode = checks.every((c) => c.pass) ? 0 : 1;
