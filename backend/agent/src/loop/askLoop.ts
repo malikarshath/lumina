@@ -13,6 +13,7 @@ import { getCached, setCached } from "../tools/searchCache.js";
 import { fetchPage } from "../tools/fetchPage.js";
 import { searchDocuments } from "../rag/search.js";
 import { recallMemory, saveMemory } from "../rag/memory.js";
+import { getDb, isDbConfigured } from "../db/mongo.js";
 
 type Emit = (event: string, data: unknown) => void;
 
@@ -100,7 +101,7 @@ function formatSources(
     .join("\n\n");
 }
 
-export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
+export async function runAskLoop(req: AskRequest, emit: Emit, userId: string, threadId: string) {
   const start = Date.now();
   let ttftMs = 0;
   let toolCalls = 0;
@@ -111,6 +112,7 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
   let outTok = 0;
   let searchCalls = 0;
   let searchCached = false;
+  let answerText = "";
 
   // Sources accumulate across tool calls; emitted once, before the first token.
   type WebSrc = { n: number; kind: "web"; title: string; url: string; snippet: string };
@@ -167,6 +169,7 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
     stream.on("text", (delta) => {
       if (!ttftMs) ttftMs = Date.now() - start;
       ensureSourcesSent();
+      answerText += delta;
       emit("token", TokenEvent.parse({ event: "token", text: delta }));
     });
 
@@ -302,11 +305,33 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string) {
   const costUsd =
     (inTok / 1e6) * 3.0 + (outTok / 1e6) * 15.0 + searchCalls * 0.008;
 
+  const answerId = "ans_" + randomUUID().slice(0, 8);
+
+  // Persist the answer + its sources so POST /artifacts can build a deck from
+  // it later. Best-effort: a DB hiccup here must never turn a good answer into
+  // a failed request — the SSE stream already delivered it to the client.
+  if (isDbConfigured()) {
+    try {
+      const db = await getDb();
+      await db.collection("answers").insertOne({
+        answerId,
+        threadId,
+        userId,
+        query: req.query,
+        text: answerText,
+        sources,
+        createdAt: new Date(),
+      });
+    } catch (err) {
+      console.error("failed to persist answer:", String(err));
+    }
+  }
+
   emit(
     "done",
     DoneEvent.parse({
       event: "done",
-      answerId: "ans_" + randomUUID().slice(0, 8),
+      answerId,
       latencyMs: Date.now() - start,
       ttftMs,
       model: LLM_MODEL,

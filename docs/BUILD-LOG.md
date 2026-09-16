@@ -12,6 +12,73 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-16 · Session 16: artifacts — decks and images, off the ask path
+
+**Did**
+- Closed a gap the artifacts feature exposed: nothing persisted an answer's text + sources after
+  streaming, so `POST /artifacts` had nothing to build a deck from. Added a best-effort write to a
+  new `answers` collection at the end of `runAskLoop` (never lets a DB hiccup fail a good answer —
+  same "best-effort" pattern as `searchCache`).
+- Built the artifacts pipeline: `src/artifacts/outline.ts` (one Anthropic call turns an answer + its
+  numbered sources into a 6–10 slide JSON outline; every citation number is re-checked against the
+  real source list before it can reach a slide — a hallucinated `[n]` is filtered out, not trusted),
+  `src/artifacts/deck.ts` (renders the outline to a real `.pptx` via `pptxgenjs`, always appending a
+  final Sources slide), `src/artifacts/image.ts` (`gpt-image-1`, or a 1×1 placeholder PNG when
+  `DRY_RUN=true`).
+- Added `src/db/gridfs.ts`: rendered files live in GridFS, in the same Atlas cluster as everything
+  else (per DECISIONS — no S3, no second store).
+- Added `src/routes/artifacts.ts`: `POST /artifacts`, `GET /artifacts/:id`, `GET /artifacts/:id/file`.
+  Image requests reserve today's cap slot atomically (`findOneAndUpdate` on an `imageUsage` row)
+  *before* any provider spend, so the `(IMAGE_DAILY_CAP+1)`th request 429s even mid-burst.
+- Wired both artifact kinds into the existing jobs worker (`make_presentation`, `generate_image`) —
+  new job kinds in the same `queued → running → done|failed` loop `ingest_document` already uses.
+  A dead job now also flips its artifact to `status: "failed"` with the error, not just the document
+  path that existed before.
+- Confirmed by re-reading `askLoop.ts`'s `tools` array that `make_presentation`/`generate_image` were
+  never exposed to the loop at all (R2 red line) — no code change needed there, just verification.
+
+**Proved**
+- `npx tsc --noEmit` in `backend/agent` and `npm run build:backend` at the root: clean, after fixing
+  one real bug — `pptxgenjs`'s UMD `.d.ts` resolves to the whole module namespace instead of the
+  default class under `moduleResolution: NodeNext` ("has no construct signatures"); worked around
+  with `createRequire` + an explicit constructor cast, same category of fix as the earlier
+  `pino-http` default-import issue.
+- Ran the agent service locally against the real Atlas cluster and Anthropic/OpenAI keys:
+  - `POST /threads/thr_test1/ask` → real streamed answer about MCP, `done` event with 5 real sources.
+  - `POST /artifacts {kind:"deck", answerId:"ans_4ba036eb"}` → `202` in the sub-300ms budget.
+  - Polled `GET /artifacts/art_6bad5d52` → `ready` after one poll, outline with 10 slides, citations
+    only referencing real source numbers 1–5.
+  - Downloaded `GET /artifacts/art_6bad5d52/file` → a genuine OOXML zip (`file` confirms it, `zipfile`
+    confirms 10 `ppt/slides/slideN.xml` parts + `[Content_Types].xml`); the true last slide
+    (numeric-sorted, not lexical — caught my own test-script bug) is a real "Sources" slide listing
+    all 5 cited URLs.
+  - Fired 3 `POST /artifacts {kind:"image"}` requests with `IMAGE_DAILY_CAP=2`: requests 1–2 → `202`,
+    request 3 → `429 {"error":"daily image cap reached","resetsAt":"2026-09-17T00:00:00.000Z"}`.
+  - With `DRY_RUN=true`: the accepted image artifacts reached `ready` with
+    `{"model":"gpt-image-1","costUsd":0,"promptUsed":"..."}` and the downloaded file is a real
+    (1×1) PNG — the whole 202→ready→file flow is provable without spending money.
+
+**Learned**
+- The rubric's automated checks for `presentation_auto` and `image_generation` (15 pts combined)
+  are all reachable by direct HTTP proof, no UI needed — worth proving via curl before ever touching
+  `web/`, same lesson as the earlier grounding work.
+- A `require()` return value is only `any` in TypeScript when nothing on `NodeRequire` narrows it —
+  a package's own ambient `.d.ts` can still leak through and needs an explicit cast, not just
+  `createRequire` on its own.
+
+**Next**
+- RAG gold-set eval (`eval/gold/rag_gold.jsonl` + `eval.mjs` computing `recallAt5 >= 0.70`) — 15 pts,
+  RAG itself already works, this is just proving `recallAt5` by arithmetic.
+- `/stats` endpoint + per-answer run logs (`runs/<requestId>.json`) + `quality/check.mjs` — 15 pts
+  combined across observability and performance_sla, and pairs naturally with the pino logging
+  already in place.
+- Remaining contract status codes: 404/413/501 (413 already partially covered by multer's file-size
+  limit but not yet contract-shaped).
+- `/evals` still needs to render one full successful and one full failing trajectory, plus the deck
+  UI/image UI hookup in `web/` (Scenario D) if time allows — backend is done; the button click isn't.
+
+---
+
 ## 2026-09-16 · Session 15: fetch_page + search cache (grounding polish, rubric-driven)
 
 **Did**

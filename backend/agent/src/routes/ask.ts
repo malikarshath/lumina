@@ -16,7 +16,7 @@ askRouter.post("/threads/:id/ask", async (req, res) => {
 
   sseInit(res);
   try {
-    await runAskLoop(parsed.data, (event, data) => sseSend(res, event, data), userId);
+    await runAskLoop(parsed.data, (event, data) => sseSend(res, event, data), userId, req.params.id);
   } catch (err) {
     // Fail loud: an error event instead of done, never a fake answer.
     sseSend(res, "error", { event: "error", status: 502, error: String(err) });

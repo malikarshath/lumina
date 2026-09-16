@@ -3,6 +3,7 @@ import { getDb } from "../db/mongo.js";
 import { chunkText } from "../rag/chunk.js";
 import { embed } from "../providers/openai.js";
 import { searchDocuments } from "../rag/search.js";
+import { makeDeck, makeImage } from "./artifacts.js";
 
 const MAX_ATTEMPTS = 3;
 
@@ -27,6 +28,8 @@ async function processNext() {
 
   try {
     if (job.kind === "ingest_document") await ingest(db, job);
+    else if (job.kind === "make_presentation") await makeDeck(db, job);
+    else if (job.kind === "generate_image") await makeImage(db, job);
     await db.collection("jobs").updateOne({ _id: job._id }, { $set: { status: "done", finishedAt: new Date() } });
   } catch (err) {
     const attempts = (job.attempts ?? 0) + 1;
@@ -37,6 +40,10 @@ async function processNext() {
     );
     if (dead && job.docId) {
       await db.collection("documents").updateOne({ docId: job.docId }, { $set: { status: "failed", error: String(err) } });
+    }
+    // Failure never leaves an artifact half-written and marked ready (PRD 5.5/5.6).
+    if (dead && job.artifactId) {
+      await db.collection("artifacts").updateOne({ artifactId: job.artifactId }, { $set: { status: "failed", error: String(err) } });
     }
     console.error(`job ${job._id} failed (attempt ${attempts}):`, String(err));
   }
