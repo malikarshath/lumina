@@ -12,6 +12,28 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-16 · Session 12: MongoDB Atlas wired — collections + indexes created
+
+**Did**
+- Malik provisioned an Atlas M0 cluster (user malikarshath_db_user, Network Access 0.0.0.0/0),
+  pasted MONGODB_URI into .env (MONGODB_DB=lumina). Debugged auth: username was left as the
+  `<db_username>` placeholder -> "bad auth"; fixed to the real user.
+- Added `mongodb` driver to the agent. Wrote `scripts/create-indexes.mjs`
+  (run: `node --env-file=.env scripts/create-indexes.mjs`).
+
+**Proved**
+- Script connected (ping ok) and created 6 collections (threads, memories, documents, chunks, jobs, cache),
+  standard indexes, a cache TTL index (expiresAt, expireAfterSeconds:0 — the search cache), and two Atlas
+  Search indexes on chunks: vector_index (vectorSearch, 1536-dim cosine) + text_index (BM25). Pushed 79eca7a.
+
+**Next**
+- Set MONGODB_URI (+ MONGODB_DB, VECTOR_BACKEND=atlas-vector-search) in Render env for the deployed backend.
+- Build RAG: db connection module in the agent; /health reports db "ok"; document ingestion (POST /spaces,
+  POST upload -> 202 -> jobs worker: parse -> chunk -> embed (OpenAI) -> store -> read-your-write probe ->
+  indexed); search_documents tool (vector + BM25 hybrid) added to the loop; memory recall/save.
+
+---
+
 ## 2026-09-16 · Session 11: latency tuning — effort:low (3/4 SLA gates pass)
 
 **Did**
