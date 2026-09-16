@@ -1,35 +1,36 @@
 {
   "assignment": "LUMINA",
-  "generatedAt": "2026-09-16T03:34:37.336Z",
+  "generatedAt": "2026-09-16T14:57:25.102Z",
   "target": "https://lumina-fb9s.onrender.com",
   "scope": "web-search slice (docs/RAG, memory, artifacts not yet included)",
   "bench": {
-    "ttftP95Ms": 3329,
-    "answerP95Ms": 9166,
-    "avgCostUsd": 0.026068,
-    "maxCostUsd": 0.028322,
+    "ttftP95Ms": 11443,
+    "answerP95Ms": 19467,
+    "avgCostUsd": 0.037655,
+    "maxCostUsd": 0.048026,
     "errorRatePct": 0,
     "capRatePct": 0,
-    "n": 6
+    "cacheHitRatePct": 66.7,
+    "n": 12
   },
   "checks": [
     {
       "metric": "TTFT p95 (ms)",
-      "measured": 3329,
+      "measured": 11443,
       "target": 2500,
       "pass": false,
       "dir": "<="
     },
     {
       "metric": "Answer p95 (ms)",
-      "measured": 9166,
+      "measured": 19467,
       "target": 12000,
-      "pass": true,
+      "pass": false,
       "dir": "<="
     },
     {
       "metric": "Cost per answer ($)",
-      "measured": 0.028322,
+      "measured": 0.048026,
       "target": 0.05,
       "pass": true,
       "dir": "<="
@@ -40,80 +41,183 @@
       "target": 1,
       "pass": true,
       "dir": "<="
+    },
+    {
+      "metric": "Search cache hit (%)",
+      "measured": 66.7,
+      "target": 50,
+      "pass": true,
+      "dir": ">="
     }
   ],
   "samples": [
     {
       "query": "What is the Model Context Protocol?",
       "ok": true,
-      "ttftMs": 2259,
-      "latencyMs": 8757,
-      "costUsd": 0.028322,
+      "ttftMs": 8822,
+      "latencyMs": 16155,
+      "costUsd": 0.041714,
       "terminated": "done",
+      "searchCached": false,
       "tokens": {
-        "in": 3269,
-        "out": 701
-      }
+        "in": 6933,
+        "out": 861
+      },
+      "pass": "cold"
     },
     {
       "query": "Who founded Anthropic?",
       "ok": true,
-      "ttftMs": 2458,
-      "latencyMs": 4829,
-      "costUsd": 0.024047,
+      "ttftMs": 6022,
+      "latencyMs": 7182,
+      "costUsd": 0.032549,
       "terminated": "done",
+      "searchCached": false,
       "tokens": {
-        "in": 3744,
-        "out": 321
-      }
+        "in": 6778,
+        "out": 281
+      },
+      "pass": "cold"
     },
     {
       "query": "What is Next.js used for?",
       "ok": true,
-      "ttftMs": 2214,
-      "latencyMs": 9166,
-      "costUsd": 0.028307,
+      "ttftMs": 5761,
+      "latencyMs": 11677,
+      "costUsd": 0.044621,
       "terminated": "done",
+      "searchCached": false,
       "tokens": {
-        "in": 3279,
-        "out": 698
-      }
+        "in": 8197,
+        "out": 802
+      },
+      "pass": "cold"
     },
     {
       "query": "When was TypeScript first released?",
       "ok": true,
-      "ttftMs": 2067,
-      "latencyMs": 3215,
-      "costUsd": 0.020243,
+      "ttftMs": 6793,
+      "latencyMs": 7257,
+      "costUsd": 0.029912,
       "terminated": "done",
+      "searchCached": false,
       "tokens": {
-        "in": 3276,
-        "out": 161
-      }
+        "in": 6399,
+        "out": 181
+      },
+      "pass": "cold"
     },
     {
       "query": "What is Retrieval-Augmented Generation?",
       "ok": true,
-      "ttftMs": 3329,
-      "latencyMs": 9016,
-      "costUsd": 0.02744,
+      "ttftMs": 11443,
+      "latencyMs": 19467,
+      "costUsd": 0.047381,
       "terminated": "done",
+      "searchCached": false,
       "tokens": {
-        "in": 3365,
-        "out": 623
-      }
+        "in": 8002,
+        "out": 1025
+      },
+      "pass": "cold"
     },
     {
       "query": "What is Vercel?",
       "ok": true,
-      "ttftMs": 2288,
-      "latencyMs": 8389,
-      "costUsd": 0.028046,
+      "ttftMs": 10576,
+      "latencyMs": 17079,
+      "costUsd": 0.044894,
       "terminated": "done",
+      "searchCached": false,
       "tokens": {
-        "in": 3192,
-        "out": 698
-      }
+        "in": 8178,
+        "out": 824
+      },
+      "pass": "cold"
+    },
+    {
+      "query": "What is the Model Context Protocol?",
+      "ok": true,
+      "ttftMs": 5439,
+      "latencyMs": 13006,
+      "costUsd": 0.035589,
+      "terminated": "done",
+      "searchCached": true,
+      "tokens": {
+        "in": 6933,
+        "out": 986
+      },
+      "pass": "warm"
+    },
+    {
+      "query": "Who founded Anthropic?",
+      "ok": true,
+      "ttftMs": 6767,
+      "latencyMs": 7725,
+      "costUsd": 0.024219,
+      "terminated": "done",
+      "searchCached": true,
+      "tokens": {
+        "in": 6778,
+        "out": 259
+      },
+      "pass": "warm"
+    },
+    {
+      "query": "What is Next.js used for?",
+      "ok": true,
+      "ttftMs": 4536,
+      "latencyMs": 10880,
+      "costUsd": 0.036351,
+      "terminated": "done",
+      "searchCached": true,
+      "tokens": {
+        "in": 8197,
+        "out": 784
+      },
+      "pass": "warm"
+    },
+    {
+      "query": "When was TypeScript first released?",
+      "ok": true,
+      "ttftMs": 4580,
+      "latencyMs": 4825,
+      "costUsd": 0.021462,
+      "terminated": "done",
+      "searchCached": true,
+      "tokens": {
+        "in": 6399,
+        "out": 151
+      },
+      "pass": "warm"
+    },
+    {
+      "query": "What is Retrieval-Augmented Generation?",
+      "ok": true,
+      "ttftMs": 10953,
+      "latencyMs": 19275,
+      "costUsd": 0.048026,
+      "terminated": "done",
+      "searchCached": false,
+      "tokens": {
+        "in": 8012,
+        "out": 1066
+      },
+      "pass": "warm"
+    },
+    {
+      "query": "What is Vercel?",
+      "ok": true,
+      "ttftMs": 11220,
+      "latencyMs": 17991,
+      "costUsd": 0.045137,
+      "terminated": "done",
+      "searchCached": false,
+      "tokens": {
+        "in": 8264,
+        "out": 823
+      },
+      "pass": "warm"
     }
   ]
 }

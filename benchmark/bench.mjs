@@ -78,27 +78,33 @@ async function runOne(query) {
     latencyMs: done.latencyMs,
     costUsd: done.costUsd,
     terminated: done.terminated,
+    searchCached: done.searchCached,
     tokens: done.tokens,
   };
 }
 
-console.log(`benchmarking ${TARGET} with ${QUERIES.length} web queries...\n`);
+console.log(`benchmarking ${TARGET} with ${QUERIES.length} web queries (cold + warm passes)...\n`);
 const samples = [];
-for (const q of QUERIES) {
-  process.stdout.write(`  • ${q} ... `);
-  try {
-    const r = await runOne(q);
-    samples.push(r);
-    console.log(r.ok ? `${r.latencyMs}ms, $${r.costUsd}` : `FAILED (${r.error})`);
-  } catch (e) {
-    samples.push({ query: q, ok: false, error: String(e) });
-    console.log(`ERROR (${e})`);
+// Two passes: cold (populates the search cache), then warm (should hit cache).
+for (const pass of ["cold", "warm"]) {
+  for (const q of QUERIES) {
+    process.stdout.write(`  • [${pass}] ${q} ... `);
+    try {
+      const r = await runOne(q);
+      samples.push({ ...r, pass });
+      console.log(r.ok ? `${r.latencyMs}ms, $${r.costUsd}${r.searchCached ? ", cached" : ""}` : `FAILED (${r.error})`);
+    } catch (e) {
+      samples.push({ query: q, ok: false, error: String(e), pass });
+      console.log(`ERROR (${e})`);
+    }
   }
 }
 
 const ok = samples.filter((s) => s.ok);
 const errors = samples.filter((s) => !s.ok);
 const caps = ok.filter((s) => s.terminated === "cap");
+const warm = ok.filter((s) => s.pass === "warm");
+const warmCached = warm.filter((s) => s.searchCached);
 
 const bench = {
   ttftP95Ms: p95(ok.map((s) => s.ttftMs)),
@@ -107,6 +113,7 @@ const bench = {
   maxCostUsd: Number(Math.max(0, ...ok.map((s) => s.costUsd)).toFixed(6)),
   errorRatePct: Number(((errors.length / samples.length) * 100).toFixed(1)),
   capRatePct: Number(((caps.length / Math.max(1, ok.length)) * 100).toFixed(1)),
+  cacheHitRatePct: Number(((warmCached.length / Math.max(1, warm.length)) * 100).toFixed(1)),
   n: samples.length,
 };
 
@@ -116,6 +123,7 @@ const checks = [
   { metric: "Answer p95 (ms)", measured: bench.answerP95Ms, target: sla.sla.answer_p95_ms, pass: bench.answerP95Ms <= sla.sla.answer_p95_ms, dir: "<=" },
   { metric: "Cost per answer ($)", measured: bench.maxCostUsd, target: sla.sla.max_cost_per_answer_usd, pass: bench.maxCostUsd <= sla.sla.max_cost_per_answer_usd, dir: "<=" },
   { metric: "Error rate (%)", measured: bench.errorRatePct, target: sla.sla.max_error_rate_pct, pass: bench.errorRatePct <= sla.sla.max_error_rate_pct, dir: "<=" },
+  { metric: "Search cache hit (%)", measured: bench.cacheHitRatePct, target: sla.sla.min_search_cache_hit_rate_pct, pass: bench.cacheHitRatePct >= sla.sla.min_search_cache_hit_rate_pct, dir: ">=" },
 ];
 
 const report = {
