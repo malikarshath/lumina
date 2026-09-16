@@ -82,6 +82,10 @@ export async function runAskLoop(req: AskRequest, emit: Emit) {
       system: SYSTEM,
       tools,
       messages,
+      // Low effort = minimal thinking before the first token -> lower TTFT.
+      // Keeps tool-calling reliable (web_search still fires), unlike disabling thinking.
+      // output_config.effort is GA on the API but not yet typed in SDK 0.68.
+      ...({ output_config: { effort: "low" } } as Record<string, unknown>),
     });
 
     // Each text delta is one token event. Sources must precede the first token.
