@@ -1,0 +1,35 @@
+{"id": "raft-1", "doc": "raft.md", "query": "Who created the Raft consensus algorithm?", "expectedKeyphrase": "Diego Ongaro and John Ousterhout at Stanford University"}
+{"id": "raft-2", "doc": "raft.md", "query": "What paper introduced Raft and where was it presented?", "expectedKeyphrase": "2014 USENIX ATC paper"}
+{"id": "raft-3", "doc": "raft.md", "query": "What are the three server states in Raft?", "expectedKeyphrase": "leader, follower, or candidate"}
+{"id": "raft-4", "doc": "raft.md", "query": "How does a follower become a candidate in a Raft election?", "expectedKeyphrase": "increments its current term and transitions to the candidate state"}
+{"id": "raft-5", "doc": "raft.md", "query": "What RPC does a Raft leader use to replicate log entries to followers?", "expectedKeyphrase": "AppendEntries remote procedure calls"}
+{"id": "raft-6", "doc": "raft.md", "query": "When is a log entry considered committed in Raft?", "expectedKeyphrase": "replicated it on a majority of the servers"}
+{"id": "raft-7", "doc": "raft.md", "query": "What do Raft leader heartbeats prevent from happening?", "expectedKeyphrase": "prevent new elections from being triggered by follower election timeouts"}
+{"id": "photo-1", "doc": "photosynthesis.md", "query": "Where in the chloroplast do the light-dependent reactions of photosynthesis occur?", "expectedKeyphrase": "occur in the thylakoid membrane"}
+{"id": "photo-2", "doc": "photosynthesis.md", "query": "What gas is released when water molecules are split during photosynthesis?", "expectedKeyphrase": "releasing electrons, protons, and oxygen gas as a byproduct"}
+{"id": "photo-3", "doc": "photosynthesis.md", "query": "What two products does the light-dependent stage of photosynthesis generate for the Calvin cycle?", "expectedKeyphrase": "ATP and NADPH, are then used to power the light-independent reactions"}
+{"id": "photo-4", "doc": "photosynthesis.md", "query": "What enzyme fixes carbon dioxide during the Calvin cycle?", "expectedKeyphrase": "RuBisCO (ribulose-1,5-bisphosphate carboxylase/oxygenase)"}
+{"id": "photo-5", "doc": "photosynthesis.md", "query": "What five-carbon sugar does carbon dioxide attach to during carbon fixation?", "expectedKeyphrase": "a five-carbon sugar called RuBP (ribulose bisphosphate)"}
+{"id": "photo-6", "doc": "photosynthesis.md", "query": "How many turns of the Calvin cycle are needed to produce one net molecule of glucose?", "expectedKeyphrase": "six turns of the cycle, fixing six carbon dioxide molecules, are required to produce one net molecule of glucose"}
+{"id": "photo-7", "doc": "photosynthesis.md", "query": "Why is RuBisCO considered especially significant globally?", "expectedKeyphrase": "the most abundant enzyme on Earth"}
+{"id": "dewey-1", "doc": "dewey.md", "query": "When was the Dewey Decimal Classification system first published?", "expectedKeyphrase": "first published in 1876 in a pamphlet"}
+{"id": "dewey-2", "doc": "dewey.md", "query": "How many main classes does the Dewey Decimal system divide knowledge into?", "expectedKeyphrase": "ten main classes, numbered 000 through 900"}
+{"id": "dewey-3", "doc": "dewey.md", "query": "Which main class number covers the social sciences in the Dewey Decimal system?", "expectedKeyphrase": "300 for the social sciences"}
+{"id": "dewey-4", "doc": "dewey.md", "query": "What organization has maintained the Dewey Decimal Classification since 1988?", "expectedKeyphrase": "OCLC (the Online Computer Library Center, a nonprofit library cooperative) acquired the Dewey Decimal Classification"}
+{"id": "dewey-5", "doc": "dewey.md", "query": "What is the continuously updated online version of the Dewey Decimal system called?", "expectedKeyphrase": "WebDewey"}
+{"id": "dewey-6", "doc": "dewey.md", "query": "What classification system do many academic and research libraries use instead of Dewey?", "expectedKeyphrase": "Library of Congress Classification system"}
+{"id": "dewey-7", "doc": "dewey.md", "query": "What idea did Melvil Dewey base his shelving system on?", "expectedKeyphrase": "relative location"}
+{"id": "westphalia-1", "doc": "westphalia.md", "query": "What war did the Peace of Westphalia end in 1648?", "expectedKeyphrase": "ended the Thirty Years' War (1618-1648)"}
+{"id": "westphalia-2", "doc": "westphalia.md", "query": "What treaty was signed between the Holy Roman Emperor and Sweden at Westphalia?", "expectedKeyphrase": "Treaty of Osnabrück"}
+{"id": "westphalia-3", "doc": "westphalia.md", "query": "What event triggered the start of the Thirty Years' War?", "expectedKeyphrase": "the Defenestration of Prague"}
+{"id": "westphalia-4", "doc": "westphalia.md", "query": "Whose independence from the Holy Roman Empire was recognized at Westphalia?", "expectedKeyphrase": "independence of the Swiss Confederacy from the Holy Roman Empire"}
+{"id": "westphalia-5", "doc": "westphalia.md", "query": "Who represented France at the Peace of Westphalia negotiations?", "expectedKeyphrase": "Cardinal Mazarin"}
+{"id": "westphalia-6", "doc": "westphalia.md", "query": "What principle of state authority is named after the Peace of Westphalia?", "expectedKeyphrase": "Westphalian sovereignty"}
+{"id": "westphalia-7", "doc": "westphalia.md", "query": "Did the Peace of Westphalia end all European conflict immediately in 1648?", "expectedKeyphrase": "war between France and Spain, for instance, continued for another decade after 1648"}
+{"id": "crypto-1", "doc": "public-key-crypto.md", "query": "Who published the Diffie-Hellman key exchange and in what year?", "expectedKeyphrase": "published in 1976 by Whitfield Diffie and Martin Hellman"}
+{"id": "crypto-2", "doc": "public-key-crypto.md", "query": "What mathematical problem protects Diffie-Hellman from eavesdroppers?", "expectedKeyphrase": "the discrete logarithm problem"}
+{"id": "crypto-3", "doc": "public-key-crypto.md", "query": "Who created RSA and where?", "expectedKeyphrase": "published in 1977 by Ron Rivest, Adi Shamir, and Leonard Adleman at MIT"}
+{"id": "crypto-4", "doc": "public-key-crypto.md", "query": "What mathematical difficulty is RSA's security based on?", "expectedKeyphrase": "difficulty of factoring the product of two large prime numbers"}
+{"id": "crypto-5", "doc": "public-key-crypto.md", "query": "Who secretly developed an RSA-equivalent method at a British intelligence agency before RSA was published?", "expectedKeyphrase": "Clifford Cocks, a mathematician at the British intelligence agency GCHQ"}
+{"id": "crypto-6", "doc": "public-key-crypto.md", "query": "What protocol secures HTTPS web traffic using public-key techniques?", "expectedKeyphrase": "TLS, the protocol that secures HTTPS web traffic"}
+{"id": "crypto-7", "doc": "public-key-crypto.md", "query": "What can a recipient verify about a message using public-key digital signatures?", "expectedKeyphrase": "verify that a message genuinely came from the claimed sender and was not altered in transit"}

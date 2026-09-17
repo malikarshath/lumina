@@ -1,38 +1,39 @@
 {
   "assignment": "LUMINA",
-  "generatedAt": "2026-09-16T14:57:25.102Z",
-  "target": "https://lumina-fb9s.onrender.com",
-  "scope": "web-search slice (docs/RAG, memory, artifacts not yet included)",
+  "generatedAt": "2026-09-17T09:19:55.478Z",
+  "target": "http://localhost:8787",
+  "scope": "web-search + RAG gold-set recall@5 (memory, artifacts not yet included)",
   "bench": {
-    "ttftP95Ms": 11443,
-    "answerP95Ms": 19467,
-    "avgCostUsd": 0.037655,
-    "maxCostUsd": 0.048026,
+    "ttftP95Ms": 26821,
+    "answerP95Ms": 36542,
+    "avgCostUsd": 0.033881,
+    "maxCostUsd": 0.076527,
     "errorRatePct": 0,
     "capRatePct": 0,
-    "cacheHitRatePct": 66.7,
+    "cacheHitRatePct": 83.3,
+    "recallAt5": 0.967,
     "n": 12
   },
   "checks": [
     {
       "metric": "TTFT p95 (ms)",
-      "measured": 11443,
+      "measured": 26821,
       "target": 2500,
       "pass": false,
       "dir": "<="
     },
     {
       "metric": "Answer p95 (ms)",
-      "measured": 19467,
+      "measured": 36542,
       "target": 12000,
       "pass": false,
       "dir": "<="
     },
     {
       "metric": "Cost per answer ($)",
-      "measured": 0.048026,
+      "measured": 0.076527,
       "target": 0.05,
-      "pass": true,
+      "pass": false,
       "dir": "<="
     },
     {
@@ -44,8 +45,15 @@
     },
     {
       "metric": "Search cache hit (%)",
-      "measured": 66.7,
+      "measured": 83.3,
       "target": 50,
+      "pass": true,
+      "dir": ">="
+    },
+    {
+      "metric": "RAG recall@5",
+      "measured": 0.967,
+      "target": 0.7,
       "pass": true,
       "dir": ">="
     }
@@ -54,170 +62,356 @@
     {
       "query": "What is the Model Context Protocol?",
       "ok": true,
-      "ttftMs": 8822,
-      "latencyMs": 16155,
-      "costUsd": 0.041714,
+      "ttftMs": 7087,
+      "latencyMs": 11833,
+      "costUsd": 0.025875,
       "terminated": "done",
-      "searchCached": false,
+      "searchCached": true,
       "tokens": {
-        "in": 6933,
-        "out": 861
+        "in": 5345,
+        "out": 656
       },
       "pass": "cold"
     },
     {
       "query": "Who founded Anthropic?",
       "ok": true,
-      "ttftMs": 6022,
-      "latencyMs": 7182,
-      "costUsd": 0.032549,
+      "ttftMs": 5099,
+      "latencyMs": 6428,
+      "costUsd": 0.023805,
       "terminated": "done",
-      "searchCached": false,
+      "searchCached": true,
       "tokens": {
-        "in": 6778,
-        "out": 281
+        "in": 6690,
+        "out": 249
       },
       "pass": "cold"
     },
     {
       "query": "What is Next.js used for?",
       "ok": true,
-      "ttftMs": 5761,
-      "latencyMs": 11677,
-      "costUsd": 0.044621,
+      "ttftMs": 5797,
+      "latencyMs": 11098,
+      "costUsd": 0.03489,
       "terminated": "done",
-      "searchCached": false,
+      "searchCached": true,
       "tokens": {
-        "in": 8197,
-        "out": 802
+        "in": 8215,
+        "out": 683
       },
       "pass": "cold"
     },
     {
       "query": "When was TypeScript first released?",
       "ok": true,
-      "ttftMs": 6793,
-      "latencyMs": 7257,
-      "costUsd": 0.029912,
+      "ttftMs": 5732,
+      "latencyMs": 6554,
+      "costUsd": 0.021462,
       "terminated": "done",
-      "searchCached": false,
+      "searchCached": true,
       "tokens": {
-        "in": 6399,
-        "out": 181
+        "in": 6389,
+        "out": 153
       },
       "pass": "cold"
     },
     {
       "query": "What is Retrieval-Augmented Generation?",
       "ok": true,
-      "ttftMs": 11443,
-      "latencyMs": 19467,
-      "costUsd": 0.047381,
+      "ttftMs": 26821,
+      "latencyMs": 36542,
+      "costUsd": 0.076527,
       "terminated": "done",
       "searchCached": false,
       "tokens": {
-        "in": 8002,
-        "out": 1025
+        "in": 11124,
+        "out": 1277
       },
       "pass": "cold"
     },
     {
       "query": "What is Vercel?",
       "ok": true,
-      "ttftMs": 10576,
-      "latencyMs": 17079,
-      "costUsd": 0.044894,
+      "ttftMs": 6281,
+      "latencyMs": 12148,
+      "costUsd": 0.035391,
       "terminated": "done",
-      "searchCached": false,
+      "searchCached": true,
       "tokens": {
-        "in": 8178,
-        "out": 824
+        "in": 8252,
+        "out": 709
       },
       "pass": "cold"
     },
     {
       "query": "What is the Model Context Protocol?",
       "ok": true,
-      "ttftMs": 5439,
-      "latencyMs": 13006,
-      "costUsd": 0.035589,
+      "ttftMs": 5552,
+      "latencyMs": 10281,
+      "costUsd": 0.025665,
       "terminated": "done",
       "searchCached": true,
       "tokens": {
-        "in": 6933,
-        "out": 986
+        "in": 5345,
+        "out": 642
       },
       "pass": "warm"
     },
     {
       "query": "Who founded Anthropic?",
       "ok": true,
-      "ttftMs": 6767,
-      "latencyMs": 7725,
-      "costUsd": 0.024219,
+      "ttftMs": 5292,
+      "latencyMs": 6701,
+      "costUsd": 0.023835,
       "terminated": "done",
       "searchCached": true,
       "tokens": {
-        "in": 6778,
-        "out": 259
+        "in": 6690,
+        "out": 251
       },
       "pass": "warm"
     },
     {
       "query": "What is Next.js used for?",
       "ok": true,
-      "ttftMs": 4536,
-      "latencyMs": 10880,
-      "costUsd": 0.036351,
+      "ttftMs": 6824,
+      "latencyMs": 12971,
+      "costUsd": 0.035685,
       "terminated": "done",
       "searchCached": true,
       "tokens": {
-        "in": 8197,
-        "out": 784
+        "in": 8215,
+        "out": 736
       },
       "pass": "warm"
     },
     {
       "query": "When was TypeScript first released?",
       "ok": true,
-      "ttftMs": 4580,
-      "latencyMs": 4825,
-      "costUsd": 0.021462,
+      "ttftMs": 5322,
+      "latencyMs": 6230,
+      "costUsd": 0.021777,
       "terminated": "done",
       "searchCached": true,
       "tokens": {
-        "in": 6399,
-        "out": 151
+        "in": 6389,
+        "out": 174
       },
       "pass": "warm"
     },
     {
       "query": "What is Retrieval-Augmented Generation?",
       "ok": true,
-      "ttftMs": 10953,
-      "latencyMs": 19275,
-      "costUsd": 0.048026,
+      "ttftMs": 15779,
+      "latencyMs": 22777,
+      "costUsd": 0.043886,
       "terminated": "done",
       "searchCached": false,
       "tokens": {
-        "in": 8012,
-        "out": 1066
+        "in": 8047,
+        "out": 783
       },
       "pass": "warm"
     },
     {
       "query": "What is Vercel?",
       "ok": true,
-      "ttftMs": 11220,
-      "latencyMs": 17991,
-      "costUsd": 0.045137,
+      "ttftMs": 4899,
+      "latencyMs": 11892,
+      "costUsd": 0.037776,
       "terminated": "done",
-      "searchCached": false,
+      "searchCached": true,
       "tokens": {
-        "in": 8264,
-        "out": 823
+        "in": 8252,
+        "out": 868
       },
       "pass": "warm"
     }
-  ]
+  ],
+  "rag": {
+    "n": 30,
+    "recallAt5": 0.967,
+    "samples": [
+      {
+        "id": "raft-1",
+        "query": "Who created the Raft consensus algorithm?",
+        "ok": true,
+        "hit": false
+      },
+      {
+        "id": "raft-2",
+        "query": "What paper introduced Raft and where was it presented?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "raft-3",
+        "query": "What are the three server states in Raft?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "raft-4",
+        "query": "How does a follower become a candidate in a Raft election?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "raft-5",
+        "query": "What RPC does a Raft leader use to replicate log entries to followers?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "raft-6",
+        "query": "When is a log entry considered committed in Raft?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "raft-7",
+        "query": "What do Raft leader heartbeats prevent from happening?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "photo-1",
+        "query": "Where in the chloroplast do the light-dependent reactions of photosynthesis occur?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "photo-2",
+        "query": "What gas is released when water molecules are split during photosynthesis?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "photo-3",
+        "query": "What two products does the light-dependent stage of photosynthesis generate for the Calvin cycle?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "photo-4",
+        "query": "What enzyme fixes carbon dioxide during the Calvin cycle?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "photo-5",
+        "query": "What five-carbon sugar does carbon dioxide attach to during carbon fixation?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "photo-6",
+        "query": "How many turns of the Calvin cycle are needed to produce one net molecule of glucose?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "photo-7",
+        "query": "Why is RuBisCO considered especially significant globally?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "dewey-1",
+        "query": "When was the Dewey Decimal Classification system first published?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "dewey-2",
+        "query": "How many main classes does the Dewey Decimal system divide knowledge into?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "dewey-3",
+        "query": "Which main class number covers the social sciences in the Dewey Decimal system?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "dewey-4",
+        "query": "What organization has maintained the Dewey Decimal Classification since 1988?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "dewey-5",
+        "query": "What is the continuously updated online version of the Dewey Decimal system called?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "dewey-6",
+        "query": "What classification system do many academic and research libraries use instead of Dewey?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "dewey-7",
+        "query": "What idea did Melvil Dewey base his shelving system on?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "westphalia-1",
+        "query": "What war did the Peace of Westphalia end in 1648?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "westphalia-2",
+        "query": "What treaty was signed between the Holy Roman Emperor and Sweden at Westphalia?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "westphalia-3",
+        "query": "What event triggered the start of the Thirty Years' War?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "westphalia-4",
+        "query": "Whose independence from the Holy Roman Empire was recognized at Westphalia?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "westphalia-5",
+        "query": "Who represented France at the Peace of Westphalia negotiations?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "westphalia-6",
+        "query": "What principle of state authority is named after the Peace of Westphalia?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "westphalia-7",
+        "query": "Did the Peace of Westphalia end all European conflict immediately in 1648?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "crypto-1",
+        "query": "Who published the Diffie-Hellman key exchange and in what year?",
+        "ok": true,
+        "hit": true
+      },
+      {
+        "id": "crypto-2",
+        "query": "What mathematical problem protects Diffie-Hellman from eavesdroppers?",
+        "ok": true,
+        "hit": true
+      }
+    ]
+  }
 }

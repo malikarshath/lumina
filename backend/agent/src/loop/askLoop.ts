@@ -239,7 +239,11 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string, th
               kind: "doc",
               docId: hcap.docId,
               title: hcap.title,
-              snippet: hcap.text.slice(0, 300),
+              // Full chunk text, not a 300-char clip: a chunk is already a
+              // bounded, citation-sized unit (chunkText caps it ~1000 chars),
+              // and truncating it further only hides real, retrieved grounding
+              // from both the model's citation and anything checking recall.
+              snippet: hcap.text,
               locator: hcap.locator,
             });
           }
