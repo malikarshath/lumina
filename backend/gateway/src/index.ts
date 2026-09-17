@@ -14,15 +14,19 @@ const PORT = Number(process.env.PORT || process.env.GATEWAY_PORT) || 8787;
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? "http://localhost:3000";
 
 app.use(cors({ origin: CORS_ORIGIN }));
-app.use(pinoHttp()); // one JSON log line per request
-
-// X-Request-Id: reuse the inbound one or mint a new one; echo it back and forward it.
-app.use((req, res, next) => {
-  const rid = (req.headers["x-request-id"] as string) || randomUUID();
-  req.headers["x-request-id"] = rid;
-  res.setHeader("x-request-id", rid);
-  next();
-});
+app.use(
+  pinoHttp({
+    // Reuse the inbound X-Request-Id or mint one, echo it, forward it to the
+    // agent (the proxy carries whatever's on req.headers), and make it
+    // pino's own req.id -- the same id then shows up in the agent's log too.
+    genReqId: (req, res) => {
+      const rid = (req.headers["x-request-id"] as string) || randomUUID();
+      req.headers["x-request-id"] = rid;
+      res.setHeader("x-request-id", rid);
+      return rid;
+    },
+  }),
+);
 
 // Rate limit per user (falls back to IP if no user header yet).
 app.use(

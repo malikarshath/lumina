@@ -21,6 +21,6 @@
     "typecheck": "echo 'TODO: tsc --noEmit across workspaces'",
     "bench": "node benchmark/bench.mjs",
     "check": "node quality/check.mjs .",
-    "export:runs": "echo 'TODO: dump the runs collection into runs/ for a deployed instance'"
+    "export:runs": "node scripts/export-runs.mjs"
   }
 }

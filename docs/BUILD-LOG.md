@@ -12,6 +12,66 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-17 · Session 18: observability — one request id, run logs, /stats
+
+**Did**
+- Consolidated each service's ad-hoc `X-Request-Id` handling into `pinoHttp`'s own `genReqId`: the
+  gateway mints/reuses the header and now also makes it pino's `req.id`; the agent reads the
+  header the proxy forwarded and does the same. One id now greps out the same request in both
+  services' JSON logs, instead of being buried inside a nested `req.headers` field.
+- Built the run log the PRD has required since §5.1 and never had: `src/observability/runLog.ts`
+  writes `runs/<requestId>.json` in the exact declared shape (`tokens`, `wallClockSec`, `costUsd`,
+  `terminated`, `toolCalls[{name, ok, error?}]`), anchored to the file's own location (not
+  `process.cwd()`) so it resolves to repo-root `runs/` whether started via `start-prod.mjs` or
+  `tsx` directly from `backend/agent`. Also inserts a superset doc (adds `ttftMs`, `searchCached`,
+  `answerId`) into a durable `runs` Mongo collection, since Render's disk doesn't survive a
+  redeploy — `scripts/export-runs.mjs` (wired to `npm run export:runs`, previously a TODO stub)
+  dumps that collection back to local files for grading against a live deployment.
+- `askLoop.ts` now collects a `toolCallLog` (same `{name, ok, error?}` as each `trace` event) and
+  returns a `RunSummary`; `ask.ts` writes the run log on both the success path (`req.log.info` one
+  line with the full summary, tagged `answer_completed`) and the failure path (`terminated: "error"`,
+  which never had *any* persisted record before this — a provider exception used to only reach the
+  client as an SSE `error` event and vanish from every log).
+- Built `GET /stats` (`src/routes/stats.ts`): every number — `requests`, `answers`,
+  `searchCacheHitRatePct`, `ttftP95Ms`, `costUsdToday`, `imagesToday` — is computed straight from
+  that same `runs` collection, so it reconciles with the agent's own log by construction, not luck.
+
+**Proved**
+- `npx tsc --noEmit` clean in both `backend/agent` and `backend/gateway`; `npm run build:backend`
+  clean.
+- Started agent + gateway locally against the real Atlas cluster. Sent `POST /threads/thr_obs/ask`
+  through the gateway with an explicit `X-Request-Id: obs-test-<ts>`: `grep`'d that exact string in
+  both `/tmp/lumina-gateway.log` and `/tmp/lumina-agent.log` — both show `"req":{"id":"obs-test-<ts>"...}`,
+  same id, plus the agent's log carries a full `"event":"answer_completed"` line with tokens/cost/
+  terminated. The written `runs/obs-test-<ts>.json` matched PRD 13's example shape exactly.
+  `GET /stats` afterward showed `costUsdToday: 0.064672` and `answers: 1`, matching the log line's
+  `costUsd: 0.064672` exactly (0% drift, well inside the 1% bar).
+  Triggered a real tool failure cheaply (no API-key tampering needed): `mode: "docs"` with no
+  `spaceId` → `search_documents` throws inside the loop's own try/catch → the SSE `trace` event and
+  the written run log both show `"ok": false, "error": "Error: no document space selected for this
+  request"` — a genuine non-empty error in `runs/`, not a placeholder.
+
+**Learned**
+- The provider-exception path (`terminated: "error"`) was never runtime-tested this session — it
+  needs an actual Anthropic outage or an invalid key to trigger for real, and deliberately breaking
+  a live key mid-session was too disruptive to justify just for this proof. Logically verified (the
+  `catch` block in `ask.ts` now calls `writeRunLog` with `terminated: "error"` and a non-empty
+  error), but not run. Worth doing once, deliberately, when building the failing-trajectory example
+  `/evals` needs (P1, still open).
+- A metric "reconciling" with a log is trivial to guarantee by construction (same collection, same
+  write) — the harder, more honest version of this check is making sure nothing that happens to a
+  real request skips writing that record, which is why the run log is now written on *both* the
+  success and the error path, not just success.
+
+**Next**
+- `/evals` full trajectories (P1, 5 pts manual) — now has a real ingredient it didn't before: a true
+  `terminated: "error"` run log, once one is deliberately produced.
+- Remaining contract status codes: 404/413/501.
+- `quality/check.mjs` itself (performance_sla, 10 pts) — `runs/` now has real content for it to read.
+- UI hookup for "Make a deck" / "generate image" buttons in `web/`.
+
+---
+
 ## 2026-09-16 · Session 17: RAG gold-set eval — recall@5 by arithmetic
 
 **Did**

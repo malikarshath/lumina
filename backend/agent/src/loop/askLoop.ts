@@ -14,8 +14,20 @@ import { fetchPage } from "../tools/fetchPage.js";
 import { searchDocuments } from "../rag/search.js";
 import { recallMemory, saveMemory } from "../rag/memory.js";
 import { getDb, isDbConfigured } from "../db/mongo.js";
+import type { ToolCallLog } from "../observability/runLog.js";
 
 type Emit = (event: string, data: unknown) => void;
+
+export type RunSummary = {
+  answerId: string;
+  tokens: number;
+  wallClockSec: number;
+  costUsd: number;
+  terminated: "done" | "cap";
+  toolCalls: ToolCallLog[];
+  ttftMs: number;
+  searchCached: boolean;
+};
 
 const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS) || 8;
 const MAX_WALL_CLOCK_MS = (Number(process.env.MAX_WALL_CLOCK_SEC) || 90) * 1000;
@@ -101,7 +113,12 @@ function formatSources(
     .join("\n\n");
 }
 
-export async function runAskLoop(req: AskRequest, emit: Emit, userId: string, threadId: string) {
+export async function runAskLoop(
+  req: AskRequest,
+  emit: Emit,
+  userId: string,
+  threadId: string,
+): Promise<RunSummary> {
   const start = Date.now();
   let ttftMs = 0;
   let toolCalls = 0;
@@ -113,6 +130,7 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string, th
   let searchCalls = 0;
   let searchCached = false;
   let answerText = "";
+  const toolCallLog: ToolCallLog[] = [];
 
   // Sources accumulate across tool calls; emitted once, before the first token.
   type WebSrc = { n: number; kind: "web"; title: string; url: string; snippet: string };
@@ -262,6 +280,7 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string, th
           throw new Error(`unknown tool: ${t.name}`);
         }
 
+        toolCallLog.push({ name: t.name, ok: true });
         emit(
           "trace",
           TraceEvent.parse({
@@ -279,7 +298,10 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string, th
           content: resultText || "No results found.",
         });
       } catch (err) {
-        // Fail loud: mark the trace ok:false with a non-empty error.
+        // Fail loud: mark the trace ok:false with a non-empty error, in both
+        // the SSE trace and the run log (A1's precedent: a swallowed error
+        // that quietly serves a degraded answer instead of failing loud).
+        toolCallLog.push({ name: t.name, ok: false, error: String(err) });
         emit(
           "trace",
           TraceEvent.parse({
@@ -345,4 +367,15 @@ export async function runAskLoop(req: AskRequest, emit: Emit, userId: string, th
       terminated,
     }),
   );
+
+  return {
+    answerId,
+    tokens: inTok + outTok,
+    wallClockSec: Number(((Date.now() - start) / 1000).toFixed(3)),
+    costUsd: Number(costUsd.toFixed(6)),
+    terminated,
+    toolCalls: toolCallLog,
+    ttftMs,
+    searchCached,
+  };
 }

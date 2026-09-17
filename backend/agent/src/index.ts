@@ -1,4 +1,5 @@
 import "./loadEnv.js"; // MUST be first: loads .env before any client reads a key
+import { randomUUID } from "node:crypto";
 import express from "express";
 import { pinoHttp } from "pino-http";
 import { HealthResponse } from "@lumina/contract";
@@ -6,16 +7,28 @@ import { askRouter } from "./routes/ask.js";
 import { spacesRouter } from "./routes/spaces.js";
 import { memoryRouter } from "./routes/memory.js";
 import { artifactsRouter } from "./routes/artifacts.js";
+import { statsRouter } from "./routes/stats.js";
 import { dbStatus, isDbConfigured } from "./db/mongo.js";
 import { startWorker } from "./worker/worker.js";
 
 const app = express();
 app.use(express.json());
-app.use(pinoHttp()); // one structured JSON log line per request
+app.use(
+  pinoHttp({
+    // The gateway mints/forwards X-Request-Id; make pino's own req.id the
+    // same value, so one id greps out the same request in both services' logs.
+    genReqId: (req, res) => {
+      const rid = String(req.headers["x-request-id"] || randomUUID());
+      res.setHeader("x-request-id", rid);
+      return rid;
+    },
+  }),
+);
 app.use(askRouter);
 app.use(spacesRouter);
 app.use(memoryRouter);
 app.use(artifactsRouter);
+app.use(statsRouter);
 
 app.get("/health", async (_req, res) => {
   // env vars are `string | undefined`; the contract requires strings,
