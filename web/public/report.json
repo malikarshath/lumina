@@ -1,39 +1,39 @@
 {
   "assignment": "LUMINA",
-  "generatedAt": "2026-09-17T09:19:55.478Z",
+  "generatedAt": "2026-09-18T08:40:26.055Z",
   "target": "http://localhost:8787",
   "scope": "web-search + RAG gold-set recall@5 (memory, artifacts not yet included)",
   "bench": {
-    "ttftP95Ms": 26821,
-    "answerP95Ms": 36542,
-    "avgCostUsd": 0.033881,
-    "maxCostUsd": 0.076527,
+    "ttftP95Ms": 9567,
+    "answerP95Ms": 17762,
+    "avgCostUsd": 0.036962,
+    "maxCostUsd": 0.047132,
     "errorRatePct": 0,
     "capRatePct": 0,
     "cacheHitRatePct": 83.3,
-    "recallAt5": 0.967,
+    "recallAt5": 0.933,
     "n": 12
   },
   "checks": [
     {
       "metric": "TTFT p95 (ms)",
-      "measured": 26821,
+      "measured": 9567,
       "target": 2500,
       "pass": false,
       "dir": "<="
     },
     {
       "metric": "Answer p95 (ms)",
-      "measured": 36542,
+      "measured": 17762,
       "target": 12000,
       "pass": false,
       "dir": "<="
     },
     {
       "metric": "Cost per answer ($)",
-      "measured": 0.076527,
+      "measured": 0.047132,
       "target": 0.05,
-      "pass": false,
+      "pass": true,
       "dir": "<="
     },
     {
@@ -52,7 +52,7 @@
     },
     {
       "metric": "RAG recall@5",
-      "measured": 0.967,
+      "measured": 0.933,
       "target": 0.7,
       "pass": true,
       "dir": ">="
@@ -62,175 +62,175 @@
     {
       "query": "What is the Model Context Protocol?",
       "ok": true,
-      "ttftMs": 7087,
-      "latencyMs": 11833,
-      "costUsd": 0.025875,
+      "ttftMs": 8813,
+      "latencyMs": 16594,
+      "costUsd": 0.042374,
       "terminated": "done",
-      "searchCached": true,
+      "searchCached": false,
       "tokens": {
-        "in": 5345,
-        "out": 656
+        "in": 7033,
+        "out": 885
       },
       "pass": "cold"
     },
     {
       "query": "Who founded Anthropic?",
       "ok": true,
-      "ttftMs": 5099,
-      "latencyMs": 6428,
-      "costUsd": 0.023805,
+      "ttftMs": 7110,
+      "latencyMs": 8678,
+      "costUsd": 0.032486,
       "terminated": "done",
-      "searchCached": true,
+      "searchCached": false,
       "tokens": {
-        "in": 6690,
-        "out": 249
+        "in": 6792,
+        "out": 274
       },
       "pass": "cold"
     },
     {
       "query": "What is Next.js used for?",
       "ok": true,
-      "ttftMs": 5797,
-      "latencyMs": 11098,
-      "costUsd": 0.03489,
+      "ttftMs": 7607,
+      "latencyMs": 14582,
+      "costUsd": 0.044867,
       "terminated": "done",
-      "searchCached": true,
+      "searchCached": false,
       "tokens": {
-        "in": 8215,
-        "out": 683
+        "in": 8229,
+        "out": 812
       },
       "pass": "cold"
     },
     {
       "query": "When was TypeScript first released?",
       "ok": true,
-      "ttftMs": 5732,
-      "latencyMs": 6554,
-      "costUsd": 0.021462,
+      "ttftMs": 7516,
+      "latencyMs": 8592,
+      "costUsd": 0.029852,
       "terminated": "done",
-      "searchCached": true,
+      "searchCached": false,
       "tokens": {
-        "in": 6389,
-        "out": 153
+        "in": 6399,
+        "out": 177
       },
       "pass": "cold"
     },
     {
       "query": "What is Retrieval-Augmented Generation?",
       "ok": true,
-      "ttftMs": 26821,
-      "latencyMs": 36542,
-      "costUsd": 0.076527,
+      "ttftMs": 9567,
+      "latencyMs": 17758,
+      "costUsd": 0.045998,
       "terminated": "done",
       "searchCached": false,
       "tokens": {
-        "in": 11124,
-        "out": 1277
+        "in": 8041,
+        "out": 925
       },
       "pass": "cold"
     },
     {
       "query": "What is Vercel?",
       "ok": true,
-      "ttftMs": 6281,
-      "latencyMs": 12148,
-      "costUsd": 0.035391,
+      "ttftMs": 9390,
+      "latencyMs": 14850,
+      "costUsd": 0.042794,
       "terminated": "done",
-      "searchCached": true,
+      "searchCached": false,
       "tokens": {
-        "in": 8252,
-        "out": 709
+        "in": 8278,
+        "out": 664
       },
       "pass": "cold"
     },
     {
       "query": "What is the Model Context Protocol?",
       "ok": true,
-      "ttftMs": 5552,
-      "latencyMs": 10281,
-      "costUsd": 0.025665,
+      "ttftMs": 7133,
+      "latencyMs": 17050,
+      "costUsd": 0.037908,
       "terminated": "done",
       "searchCached": true,
       "tokens": {
-        "in": 5345,
-        "out": 642
+        "in": 6931,
+        "out": 1141
       },
       "pass": "warm"
     },
     {
       "query": "Who founded Anthropic?",
       "ok": true,
-      "ttftMs": 5292,
-      "latencyMs": 6701,
-      "costUsd": 0.023835,
+      "ttftMs": 5030,
+      "latencyMs": 6370,
+      "costUsd": 0.024216,
       "terminated": "done",
       "searchCached": true,
       "tokens": {
-        "in": 6690,
-        "out": 251
+        "in": 6792,
+        "out": 256
       },
       "pass": "warm"
     },
     {
       "query": "What is Next.js used for?",
       "ok": true,
-      "ttftMs": 6824,
-      "latencyMs": 12971,
-      "costUsd": 0.035685,
+      "ttftMs": 5080,
+      "latencyMs": 11095,
+      "costUsd": 0.035877,
       "terminated": "done",
       "searchCached": true,
       "tokens": {
-        "in": 8215,
-        "out": 736
+        "in": 8229,
+        "out": 746
       },
       "pass": "warm"
     },
     {
       "query": "When was TypeScript first released?",
       "ok": true,
-      "ttftMs": 5322,
-      "latencyMs": 6230,
-      "costUsd": 0.021777,
+      "ttftMs": 6027,
+      "latencyMs": 6742,
+      "costUsd": 0.021462,
       "terminated": "done",
       "searchCached": true,
       "tokens": {
-        "in": 6389,
-        "out": 174
+        "in": 6399,
+        "out": 151
       },
       "pass": "warm"
     },
     {
       "query": "What is Retrieval-Augmented Generation?",
       "ok": true,
-      "ttftMs": 15779,
-      "latencyMs": 22777,
-      "costUsd": 0.043886,
+      "ttftMs": 9182,
+      "latencyMs": 17762,
+      "costUsd": 0.047132,
       "terminated": "done",
       "searchCached": false,
       "tokens": {
-        "in": 8047,
-        "out": 783
+        "in": 8039,
+        "out": 1001
       },
       "pass": "warm"
     },
     {
       "query": "What is Vercel?",
       "ok": true,
-      "ttftMs": 4899,
-      "latencyMs": 11892,
-      "costUsd": 0.037776,
+      "ttftMs": 6697,
+      "latencyMs": 14443,
+      "costUsd": 0.038574,
       "terminated": "done",
       "searchCached": true,
       "tokens": {
-        "in": 8252,
-        "out": 868
+        "in": 8278,
+        "out": 916
       },
       "pass": "warm"
     }
   ],
   "rag": {
     "n": 30,
-    "recallAt5": 0.967,
+    "recallAt5": 0.933,
     "samples": [
       {
         "id": "raft-1",
@@ -242,7 +242,7 @@
         "id": "raft-2",
         "query": "What paper introduced Raft and where was it presented?",
         "ok": true,
-        "hit": true
+        "hit": false
       },
       {
         "id": "raft-3",
@@ -413,110 +413,5 @@
         "hit": true
       }
     ]
-  },
-  "trajectories": {
-    "success": {
-      "query": "What is the Model Context Protocol?",
-      "lesson": "Sources arrive before the first token (grounding is verified before any text streams); every [n] cites a source the trace actually fetched via fetch_page, not just a search snippet; the loop terminates cleanly once the model has enough grounded context to answer.",
-      "events": [
-        {
-          "event": "trace",
-          "step": 1,
-          "tool": "web_search",
-          "input": {
-            "query": "Model Context Protocol"
-          },
-          "ok": true,
-          "ms": 2876
-        },
-        {
-          "event": "trace",
-          "step": 2,
-          "tool": "fetch_page",
-          "input": {
-            "url": "https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro"
-          },
-          "ok": true,
-          "ms": 319
-        },
-        {
-          "event": "trace",
-          "step": 3,
-          "tool": "fetch_page",
-          "input": {
-            "url": "https://www.anthropic.com/news/model-context-protocol"
-          },
-          "ok": true,
-          "ms": 763
-        },
-        {
-          "event": "sources",
-          "sources": [
-            {
-              "n": 1,
-              "kind": "web",
-              "title": "Model Context Protocol - Wikipedia",
-              "url": "https://en.wikipedia.org/wiki/Model_Context_Protocol",
-              "snippet": "The Model Context Protocol (MCP) is an open standard and open-source framework introduced by Anthropic in November 2024 to standardize the way artificial intelligence (AI) systems like large language models (LLMs) integrate and share data with external tools, systems, and data sources. MCP provides a standardized interface for reading files, executing functions, and handling contextual prompts. Following its announcement, the protocol was adopted by major AI providers, including OpenAI and [...] MCP was announced by Anthropic in November 2024 as an open standard for connecting AI assistants to data systems such as content repositories, business management tools, and development environments. The protocol was created at Anthropic by engineers David Soria Parra and Justin Spahr-Summers. It aims to address the challenge of information silos and legacy systems. Before MCP, developers often had to build custom connectors for each data source or tool, resulting in what Anthropic described as [...] [edit]\n\nMCP defines a standardized framework for integrating AI systems with external data sources and tools. MCP enables applications such as querying structured databases with plain language in the field of natural language data access."
-            },
-            {
-              "n": 2,
-              "kind": "web",
-              "title": "What is the Model Context Protocol (MCP)?",
-              "url": "https://www.databricks.com/blog/what-is-model-context-protocol",
-              "snippet": "The Model Context Protocol is an open-source, unified standard for interoperability that enables developers to build context-aware AI applications. MCP complements LLMOps by exposing runtime integration, observability, and governance controls that simplify deployment, monitoring, and lifecycle management of LLM applications. [...] The Model Context Protocol (MCP) is an open standard that enables AI applications to connect seamlessly with external data sources, tools, and systems. Think of the Model Context Protocol as a USB-C port for AI systems—just as a USB-C port standardizes how devices connect to computers, MCP standardizes how AI agents access external resources like databases, APIs, file systems, and knowledge bases.\n\nMCP communications flow diagram between client, MCP servers, host, and backend server. [...] Reality: The Model Context Protocol standardizes protocol-level integration with persistent context management and dynamic capability discovery. Unlike REST or RPC calls, MCP defines how AI agents discover capabilities, subscribe to streams, and maintain contextual state across interactions through the standard protocol."
-            },
-            {
-              "n": 3,
-              "kind": "web",
-              "title": "What is the Model Context Protocol (MCP)?",
-              "url": "https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro",
-              "snippet": "MCP (Model Context Protocol) is an open-source standard for connecting AI applications to external systems.Using MCP, AI applications like Claude or ChatGPT can connect to data sources (e.g. local files, databases), tools (e.g. search engines, calculators) and workflows (e.g. specialized prompts)—enabling them to access key information and perform tasks.Think of MCP like a USB-C port for AI applications. Just as USB-C provides a standardized way to connect electronic devices, MCP provides a [...] MCP provides a standardized way to connect AI applications to external systems."
-            },
-            {
-              "n": 4,
-              "kind": "web",
-              "title": "Introducing the Model Context Protocol",
-              "url": "https://www.anthropic.com/news/model-context-protocol",
-              "snippet": "The Model Context Protocol is an open standard that enables developers to build secure, two-way connections between their data sources and AI-powered tools. The architecture is straightforward: developers can either expose their data through MCP servers or build AI applications (MCP clients) that connect to these servers.\n\nToday, we're introducing three major components of the Model Context Protocol for developers: [...] MCP addresses this challenge. It provides a universal, open standard for connecting AI systems with data sources, replacing fragmented integrations with a single protocol. The result is a simpler, more reliable way to give AI systems access to the data they need.\n\n## Model Context Protocol [...] \"At Block, open source is more than a development model—it’s the foundation of our work and a commitment to creating technology that drives meaningful change and serves as a public good for all,” said Dhanji R. Prasanna, Chief Technology Officer at Block. “Open technologies like the Model Context Protocol are the bridges that connect AI to real-world applications, ensuring innovation is accessible, transparent, and rooted in collaboration. We are excited to partner on a protocol and use it to"
-            },
-            {
-              "n": 5,
-              "kind": "web",
-              "title": "Model Context Protocol · GitHub",
-              "url": "https://github.com/modelcontextprotocol",
-              "snippet": "MCP Logo\n\nA protocol for seamless integration between LLM applications and external data sources\n\nDocumentation | Specification | Discussions\n\nThe Model Context Protocol (MCP) is an open protocol that enables seamless integration between LLM applications and external data sources and tools. Whether you're building an AI-powered IDE, enhancing a chat interface, or creating custom AI workflows, MCP provides a standardized way to connect LLMs with the context they need.\n\n## Getting Started [...] ### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n@modelcontextprotocol\n\n# Model Context Protocol\n\nAn open protocol that enables seamless integration between LLM applications and external data sources and tools.\n\n Verified \n\n  We've verified that the organization modelcontextprotocol controls the domain:\n\n  + modelcontextprotocol.io\n\n  Learn more about verified organizations\n\n 50.5k followers\n \n\nREADME.md\n\n# Model Context Protocol\n\nMCP Logo [...] ## Contributing\n\nWe welcome contributions of all kinds! Whether you want to fix bugs, improve documentation, or propose new features, please see our contributing guide to get started.\n\nHave questions? Join the discussion in our community forum.\n\n## About\n\nThe Model Context Protocol is an open source project hosted by The Linux Foundation and open to contributions from the entire community.\n\n## Pinned Loading\n\n1. modelcontextprotocol modelcontextprotocol Public"
-            }
-          ]
-        },
-        {
-          "event": "done",
-          "answerId": "ans_8ceaf64c",
-          "model": "claude-sonnet-5",
-          "latencyMs": 24444,
-          "ttftMs": 15258,
-          "costUsd": 0.043718,
-          "searchCached": false,
-          "tokens": {
-            "in": 6931,
-            "out": 995
-          },
-          "terminated": "done"
-        }
-      ],
-      "answerText": "The **Model Context Protocol (MCP)** is an open-source, open standard—originally created and released by Anthropic in November 2024—for connecting AI applications (like Claude or ChatGPT) to external systems such as data sources, tools, and workflows [3][4].\n\n**Core idea:** Rather than building a custom, one-off integration for every data source or tool an AI system needs to use, developers can build against a single standardized protocol. Anthropic describes MCP as being like \"a USB-C port for AI applications\"—just as USB-C offers one standard connector for many devices, MCP offers one standard way to connect AI apps to external systems [3].\n\n**Architecture:** MCP works through a client-server model. Developers can:\n- Expose their own data/tools through **MCP servers**, or\n- Build AI applications (**MCP clients**) that connect to those servers to access data and capabilities [4].\n\nThis enables secure, two-way connections between AI systems and things like local files, databases, content repositories, business tools (e.g., Google Drive, Slack, GitHub, Postgres), and development environments [3][4].\n\n**What it enables:**\n- AI agents accessing personal tools like Google Calendar or Notion to act as more personalized assistants\n- Coding assistants (e.g., Claude Code) generating apps directly from design tools like Figma\n- Enterprise chatbots querying multiple internal databases via chat\n- AI models controlling external hardware/software workflows, such as designing in Blender and sending output to a 3D printer [3]\n\n**Why it matters:**\n- **Developers** benefit from reduced complexity and development time when integrating AI with external systems.\n- **AI applications/agents** gain access to a broad ecosystem of data sources and tools, enhancing capability.\n- **End-users** get more capable assistants that can access their data and take actions on their behalf [3].\n\n**Ecosystem:** MCP has since been adopted broadly—supported by AI assistants such as Claude and ChatGPT, and development tools including Visual Studio Code, Cursor, and others, allowing developers to \"build once and integrate everywhere\" [3]. Early adopters at launch included companies like Block and Apollo, along with dev-tool companies such as Zed, Replit, Codeium, and Sourcegraph [4]. MCP was created at Anthropic by David Soria Parra and Justin Spahr-Summers, and is maintained as a collaborative open-source project [4]."
-    },
-    "failure": {
-      "query": "What is the capital of France?",
-      "lesson": "A provider exception (here: an invalid model name) is never masked as a plausible answer. The loop throws before any tokens stream, the client receives an SSE error event with status 502, and the run log records terminated: \"error\" with the real error string -- no silent fallback, no fabricated response.",
-      "events": [
-        {
-          "event": "error",
-          "status": 502,
-          "error": "Error: 404 {\"type\":\"error\",\"error\":{\"type\":\"not_found_error\",\"message\":\"model: claude-does-not-exist-xyz\"},\"request_id\":\"req_011CfAVsngfxfQ8MV6h2rGYr\"}"
-        }
-      ],
-      "answerText": ""
-    }
   }
 }

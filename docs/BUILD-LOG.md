@@ -12,6 +12,54 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-17 · Session 23: parallel tool execution — a real, honest latency win
+
+**Did**
+- Malik asked why Performance & SLA still fails. Answer: the contract mandates real retrieval
+  (search + fetch real pages) complete before the first token, and every step of that was measured
+  as genuinely slow (TTFT p95 26.8s). Two things already tried and rejected: `effort: "low"` (kept,
+  helped some) and front-loading search before the model's first turn (reverted in Session 11 —
+  breaks "the agent decides when to search"). One thing NOT yet tried, and it doesn't reopen that
+  debate: `askLoop.ts` was executing every tool call from a single model turn **sequentially**
+  (`for (const t of toolUses) { await ... }`) even when the model asked for e.g. 3 `fetch_page` calls
+  at once. Sequential cost is `t1+t2+t3`; running them concurrently costs `max(t1,t2,t3)` — same
+  work the agent already decided to do, just not queued needlessly.
+- Refactored into two phases: **phase 1** runs every tool call's I/O concurrently via `Promise.all`
+  (pure retrieval, no shared-state writes — avoids a real race where two concurrent calls could both
+  read `sources.length` as their starting citation index before either had pushed). **Phase 2**
+  applies every outcome to `sources`/`toolCallLog`/trace events sequentially, in original order,
+  once all promises have resolved — same numbering guarantees as before, zero races.
+
+**Proved**
+- `npx tsc --noEmit` clean.
+- Full real `node benchmark/bench.mjs` run (12 web queries × 2 passes + 30 RAG queries), before vs
+  after, same machine, same real Atlas/Anthropic/Tavily backend:
+  | Metric | Before (Session 17) | After | Target |
+  |---|---|---|---|
+  | TTFT p95 | 26,821ms | **9,567ms** | 2,500ms (still fails, ~2.8x closer) |
+  | Answer p95 | 36,542ms | **17,762ms** | 12,000ms (still fails, ~2x closer) |
+  | Cost per answer | $0.076527 (FAIL) | $0.047132 (PASS) | $0.05 |
+  | RAG recall@5 | 0.967 | 0.933 | 0.70 (still comfortably passing) |
+- Still short of the strict SLA targets — that remaining floor is the real cost of grounding (one
+  search round-trip + the slowest of N page fetches + the model's own turns), not something
+  parallel execution alone can erase without reopening the front-loading trade-off Malik already
+  ruled out.
+
+**Learned**
+- "Won't `Promise.all` just wait for the slowest one anyway?" is the right question to ask before
+  trusting a concurrency claim — yes, but waiting once for `max(t)` beats waiting three times for
+  `sum(t)`. The real risk with a naive `Promise.all` here wasn't speed, it was correctness: shared
+  mutable state (`sources.length` as a citation index) read concurrently. Splitting "do the I/O" from
+  "apply the result" is the general pattern for parallelizing anything that also mutates shared state.
+
+**Next**
+- Deep Search mode (query decomposition, per-sub-question research, merged citations) — flagged by
+  Malik as a real gap against a full Perplexity-parity checklist. Not a scored rubric item (PRD 5.1
+  lists it as "Could"), but a real missing capability. Building it as mode `"deep"`, fully separate
+  from the existing `auto`/`web`/`docs` loop.
+
+---
+
 ## 2026-09-17 · Session 22: UI hookup — deck/image buttons (last item of the 2-hour push)
 
 **Did (item 4 of 4)**

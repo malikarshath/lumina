@@ -8,11 +8,11 @@ import {
   DoneEvent,
 } from "@lumina/contract";
 import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
-import { tavilySearch } from "../tools/webSearch.js";
+import { tavilySearch, type WebResult } from "../tools/webSearch.js";
 import { getCached, setCached } from "../tools/searchCache.js";
 import { fetchPage } from "../tools/fetchPage.js";
-import { searchDocuments } from "../rag/search.js";
-import { recallMemory, saveMemory } from "../rag/memory.js";
+import { searchDocuments, type DocHit } from "../rag/search.js";
+import { recallMemory, saveMemory, type Memory } from "../rag/memory.js";
 import { getDb, isDbConfigured } from "../db/mongo.js";
 import type { ToolCallLog } from "../observability/runLog.js";
 
@@ -206,121 +206,121 @@ export async function runAskLoop(
     // Record the assistant turn (including its tool_use blocks) in history.
     messages.push({ role: "assistant", content: msg.content });
 
+    // Phase 1: run every tool call's I/O concurrently. This is the actual
+    // latency win -- when the model asks for e.g. three fetch_page calls in
+    // one turn, they now overlap on the network instead of queuing one
+    // after another (sequential cost t1+t2+t3 -> parallel cost max(t1,t2,t3)).
+    // Nothing here touches `sources` -- that would race across concurrent
+    // calls reading its length as a starting index. Retrieval only; no
+    // shared-state mutation until phase 2.
+    type Outcome =
+      | { t: Anthropic.ToolUseBlock; ms: number; ok: true; kind: "web_search"; cached: boolean; found: WebResult[] }
+      | { t: Anthropic.ToolUseBlock; ms: number; ok: true; kind: "fetch_page"; text: string }
+      | { t: Anthropic.ToolUseBlock; ms: number; ok: true; kind: "search_documents"; hits: DocHit[] }
+      | { t: Anthropic.ToolUseBlock; ms: number; ok: true; kind: "recall_memory"; mems: Memory[] }
+      | { t: Anthropic.ToolUseBlock; ms: number; ok: true; kind: "save_memory" }
+      | { t: Anthropic.ToolUseBlock; ms: number; ok: false; error: string };
+
+    const outcomes: Outcome[] = await Promise.all(
+      toolUses.map(async (t): Promise<Outcome> => {
+        const t0 = Date.now();
+        try {
+          if (t.name === "web_search") {
+            const q = (t.input as { query: string }).query;
+            const cachedHit = await getCached(q);
+            const found = cachedHit ?? (await tavilySearch(q));
+            if (!cachedHit) await setCached(q, found);
+            return { t, ms: Date.now() - t0, ok: true, kind: "web_search", cached: Boolean(cachedHit), found };
+          }
+          if (t.name === "fetch_page") {
+            const url = (t.input as { url: string }).url;
+            const text = await fetchPage(url);
+            return { t, ms: Date.now() - t0, ok: true, kind: "fetch_page", text };
+          }
+          if (t.name === "search_documents") {
+            const q = (t.input as { query: string }).query;
+            if (!req.spaceId) throw new Error("no document space selected for this request");
+            const hits = await searchDocuments(req.spaceId, q, 5);
+            return { t, ms: Date.now() - t0, ok: true, kind: "search_documents", hits };
+          }
+          if (t.name === "recall_memory") {
+            const q = (t.input as { query: string }).query;
+            const mems = await recallMemory(userId, q, 5);
+            return { t, ms: Date.now() - t0, ok: true, kind: "recall_memory", mems };
+          }
+          if (t.name === "save_memory") {
+            const text = (t.input as { text: string }).text;
+            await saveMemory(userId, text);
+            return { t, ms: Date.now() - t0, ok: true, kind: "save_memory" };
+          }
+          throw new Error(`unknown tool: ${t.name}`);
+        } catch (err) {
+          return { t, ms: Date.now() - t0, ok: false, error: String(err) };
+        }
+      }),
+    );
+
+    // Phase 2: apply outcomes to shared state in original order -- sequential,
+    // synchronous, no races on `sources`/`step`/`toolCallLog`.
     const results: Anthropic.ToolResultBlockParam[] = [];
-    for (const t of toolUses) {
+    for (const o of outcomes) {
       step++;
       toolCalls++;
-      const t0 = Date.now();
-      try {
-        const startN = sources.length;
-        let resultText: string;
 
-        if (t.name === "web_search") {
-          const q = (t.input as { query: string }).query;
-          let found = await getCached(q);
-          if (found) {
-            searchCached = true; // served from cache — no Tavily call, no cost
-          } else {
-            searchCalls++;
-            found = await tavilySearch(q);
-            await setCached(q, found);
-          }
-          for (const r of found) {
-            sources.push({
-              n: sources.length + 1,
-              kind: "web",
-              title: r.title,
-              url: r.url,
-              snippet: r.snippet,
-            });
-          }
-          // Return titles + URLs only (no content) so the model must fetch_page
-          // the results it will cite — grounding in the real page, not snippets.
-          resultText =
-            sources
-              .slice(startN)
-              .map((s) => `[${s.n}] ${s.title} — ${(s as { url?: string }).url}`)
-              .join("\n") +
-            "\n\nCall fetch_page(url) on the results you will cite to read the full page before answering.";
-        } else if (t.name === "fetch_page") {
-          const url = (t.input as { url: string }).url;
-          resultText = await fetchPage(url);
-        } else if (t.name === "search_documents") {
-          const q = (t.input as { query: string }).query;
-          if (!req.spaceId) {
-            throw new Error("no document space selected for this request");
-          }
-          const hits = await searchDocuments(req.spaceId, q, 5);
-          for (const hcap of hits) {
-            sources.push({
-              n: sources.length + 1,
-              kind: "doc",
-              docId: hcap.docId,
-              title: hcap.title,
-              // Full chunk text, not a 300-char clip: a chunk is already a
-              // bounded, citation-sized unit (chunkText caps it ~1000 chars),
-              // and truncating it further only hides real, retrieved grounding
-              // from both the model's citation and anything checking recall.
-              snippet: hcap.text,
-              locator: hcap.locator,
-            });
-          }
-          resultText = formatSources(sources.slice(startN));
-        } else if (t.name === "recall_memory") {
-          const q = (t.input as { query: string }).query;
-          const mems = await recallMemory(userId, q, 5);
-          resultText = mems.length
-            ? mems.map((m) => `(memory) ${m.text}`).join("\n")
-            : "No relevant memories saved.";
-        } else if (t.name === "save_memory") {
-          const text = (t.input as { text: string }).text;
-          await saveMemory(userId, text);
-          resultText = "Saved to memory.";
-        } else {
-          throw new Error(`unknown tool: ${t.name}`);
-        }
-
-        toolCallLog.push({ name: t.name, ok: true });
-        emit(
-          "trace",
-          TraceEvent.parse({
-            event: "trace",
-            step,
-            tool: t.name,
-            input: t.input,
-            ok: true,
-            ms: Date.now() - t0,
-          }),
-        );
-        results.push({
-          type: "tool_result",
-          tool_use_id: t.id,
-          content: resultText || "No results found.",
-        });
-      } catch (err) {
+      if (!o.ok) {
         // Fail loud: mark the trace ok:false with a non-empty error, in both
         // the SSE trace and the run log (A1's precedent: a swallowed error
         // that quietly serves a degraded answer instead of failing loud).
-        toolCallLog.push({ name: t.name, ok: false, error: String(err) });
-        emit(
-          "trace",
-          TraceEvent.parse({
-            event: "trace",
-            step,
-            tool: t.name,
-            input: t.input,
-            ok: false,
-            ms: Date.now() - t0,
-            error: String(err),
-          }),
-        );
-        results.push({
-          type: "tool_result",
-          tool_use_id: t.id,
-          content: `Error: ${String(err)}`,
-          is_error: true,
-        });
+        toolCallLog.push({ name: o.t.name, ok: false, error: o.error });
+        emit("trace", TraceEvent.parse({ event: "trace", step, tool: o.t.name, input: o.t.input, ok: false, ms: o.ms, error: o.error }));
+        results.push({ type: "tool_result", tool_use_id: o.t.id, content: `Error: ${o.error}`, is_error: true });
+        continue;
       }
+
+      const startN = sources.length;
+      let resultText: string;
+
+      if (o.kind === "web_search") {
+        searchCached = searchCached || o.cached;
+        if (!o.cached) searchCalls++;
+        for (const r of o.found) {
+          sources.push({ n: sources.length + 1, kind: "web", title: r.title, url: r.url, snippet: r.snippet });
+        }
+        // Return titles + URLs only (no content) so the model must fetch_page
+        // the results it will cite — grounding in the real page, not snippets.
+        resultText =
+          sources
+            .slice(startN)
+            .map((s) => `[${s.n}] ${s.title} — ${(s as { url?: string }).url}`)
+            .join("\n") +
+          "\n\nCall fetch_page(url) on the results you will cite to read the full page before answering.";
+      } else if (o.kind === "fetch_page") {
+        resultText = o.text;
+      } else if (o.kind === "search_documents") {
+        for (const hcap of o.hits) {
+          sources.push({
+            n: sources.length + 1,
+            kind: "doc",
+            docId: hcap.docId,
+            title: hcap.title,
+            // Full chunk text, not a 300-char clip: a chunk is already a
+            // bounded, citation-sized unit (chunkText caps it ~1000 chars),
+            // and truncating it further only hides real, retrieved grounding
+            // from both the model's citation and anything checking recall.
+            snippet: hcap.text,
+            locator: hcap.locator,
+          });
+        }
+        resultText = formatSources(sources.slice(startN));
+      } else if (o.kind === "recall_memory") {
+        resultText = o.mems.length ? o.mems.map((m) => `(memory) ${m.text}`).join("\n") : "No relevant memories saved.";
+      } else {
+        resultText = "Saved to memory.";
+      }
+
+      toolCallLog.push({ name: o.t.name, ok: true });
+      emit("trace", TraceEvent.parse({ event: "trace", step, tool: o.t.name, input: o.t.input, ok: true, ms: o.ms }));
+      results.push({ type: "tool_result", tool_use_id: o.t.id, content: resultText || "No results found." });
     }
     messages.push({ role: "user", content: results });
   }
