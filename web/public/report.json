@@ -413,5 +413,110 @@
         "hit": true
       }
     ]
+  },
+  "trajectories": {
+    "success": {
+      "query": "What is the Model Context Protocol?",
+      "lesson": "Sources arrive before the first token (grounding is verified before any text streams); every [n] cites a source the trace actually fetched via fetch_page, not just a search snippet; the loop terminates cleanly once the model has enough grounded context to answer.",
+      "events": [
+        {
+          "event": "trace",
+          "step": 1,
+          "tool": "web_search",
+          "input": {
+            "query": "Model Context Protocol"
+          },
+          "ok": true,
+          "ms": 2876
+        },
+        {
+          "event": "trace",
+          "step": 2,
+          "tool": "fetch_page",
+          "input": {
+            "url": "https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro"
+          },
+          "ok": true,
+          "ms": 319
+        },
+        {
+          "event": "trace",
+          "step": 3,
+          "tool": "fetch_page",
+          "input": {
+            "url": "https://www.anthropic.com/news/model-context-protocol"
+          },
+          "ok": true,
+          "ms": 763
+        },
+        {
+          "event": "sources",
+          "sources": [
+            {
+              "n": 1,
+              "kind": "web",
+              "title": "Model Context Protocol - Wikipedia",
+              "url": "https://en.wikipedia.org/wiki/Model_Context_Protocol",
+              "snippet": "The Model Context Protocol (MCP) is an open standard and open-source framework introduced by Anthropic in November 2024 to standardize the way artificial intelligence (AI) systems like large language models (LLMs) integrate and share data with external tools, systems, and data sources. MCP provides a standardized interface for reading files, executing functions, and handling contextual prompts. Following its announcement, the protocol was adopted by major AI providers, including OpenAI and [...] MCP was announced by Anthropic in November 2024 as an open standard for connecting AI assistants to data systems such as content repositories, business management tools, and development environments. The protocol was created at Anthropic by engineers David Soria Parra and Justin Spahr-Summers. It aims to address the challenge of information silos and legacy systems. Before MCP, developers often had to build custom connectors for each data source or tool, resulting in what Anthropic described as [...] [edit]\n\nMCP defines a standardized framework for integrating AI systems with external data sources and tools. MCP enables applications such as querying structured databases with plain language in the field of natural language data access."
+            },
+            {
+              "n": 2,
+              "kind": "web",
+              "title": "What is the Model Context Protocol (MCP)?",
+              "url": "https://www.databricks.com/blog/what-is-model-context-protocol",
+              "snippet": "The Model Context Protocol is an open-source, unified standard for interoperability that enables developers to build context-aware AI applications. MCP complements LLMOps by exposing runtime integration, observability, and governance controls that simplify deployment, monitoring, and lifecycle management of LLM applications. [...] The Model Context Protocol (MCP) is an open standard that enables AI applications to connect seamlessly with external data sources, tools, and systems. Think of the Model Context Protocol as a USB-C port for AI systems—just as a USB-C port standardizes how devices connect to computers, MCP standardizes how AI agents access external resources like databases, APIs, file systems, and knowledge bases.\n\nMCP communications flow diagram between client, MCP servers, host, and backend server. [...] Reality: The Model Context Protocol standardizes protocol-level integration with persistent context management and dynamic capability discovery. Unlike REST or RPC calls, MCP defines how AI agents discover capabilities, subscribe to streams, and maintain contextual state across interactions through the standard protocol."
+            },
+            {
+              "n": 3,
+              "kind": "web",
+              "title": "What is the Model Context Protocol (MCP)?",
+              "url": "https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro",
+              "snippet": "MCP (Model Context Protocol) is an open-source standard for connecting AI applications to external systems.Using MCP, AI applications like Claude or ChatGPT can connect to data sources (e.g. local files, databases), tools (e.g. search engines, calculators) and workflows (e.g. specialized prompts)—enabling them to access key information and perform tasks.Think of MCP like a USB-C port for AI applications. Just as USB-C provides a standardized way to connect electronic devices, MCP provides a [...] MCP provides a standardized way to connect AI applications to external systems."
+            },
+            {
+              "n": 4,
+              "kind": "web",
+              "title": "Introducing the Model Context Protocol",
+              "url": "https://www.anthropic.com/news/model-context-protocol",
+              "snippet": "The Model Context Protocol is an open standard that enables developers to build secure, two-way connections between their data sources and AI-powered tools. The architecture is straightforward: developers can either expose their data through MCP servers or build AI applications (MCP clients) that connect to these servers.\n\nToday, we're introducing three major components of the Model Context Protocol for developers: [...] MCP addresses this challenge. It provides a universal, open standard for connecting AI systems with data sources, replacing fragmented integrations with a single protocol. The result is a simpler, more reliable way to give AI systems access to the data they need.\n\n## Model Context Protocol [...] \"At Block, open source is more than a development model—it’s the foundation of our work and a commitment to creating technology that drives meaningful change and serves as a public good for all,” said Dhanji R. Prasanna, Chief Technology Officer at Block. “Open technologies like the Model Context Protocol are the bridges that connect AI to real-world applications, ensuring innovation is accessible, transparent, and rooted in collaboration. We are excited to partner on a protocol and use it to"
+            },
+            {
+              "n": 5,
+              "kind": "web",
+              "title": "Model Context Protocol · GitHub",
+              "url": "https://github.com/modelcontextprotocol",
+              "snippet": "MCP Logo\n\nA protocol for seamless integration between LLM applications and external data sources\n\nDocumentation | Specification | Discussions\n\nThe Model Context Protocol (MCP) is an open protocol that enables seamless integration between LLM applications and external data sources and tools. Whether you're building an AI-powered IDE, enhancing a chat interface, or creating custom AI workflows, MCP provides a standardized way to connect LLMs with the context they need.\n\n## Getting Started [...] ### Uh oh!\n\nThere was an error while loading. Please reload this page.\n\n@modelcontextprotocol\n\n# Model Context Protocol\n\nAn open protocol that enables seamless integration between LLM applications and external data sources and tools.\n\n Verified \n\n  We've verified that the organization modelcontextprotocol controls the domain:\n\n  + modelcontextprotocol.io\n\n  Learn more about verified organizations\n\n 50.5k followers\n \n\nREADME.md\n\n# Model Context Protocol\n\nMCP Logo [...] ## Contributing\n\nWe welcome contributions of all kinds! Whether you want to fix bugs, improve documentation, or propose new features, please see our contributing guide to get started.\n\nHave questions? Join the discussion in our community forum.\n\n## About\n\nThe Model Context Protocol is an open source project hosted by The Linux Foundation and open to contributions from the entire community.\n\n## Pinned Loading\n\n1. modelcontextprotocol modelcontextprotocol Public"
+            }
+          ]
+        },
+        {
+          "event": "done",
+          "answerId": "ans_8ceaf64c",
+          "model": "claude-sonnet-5",
+          "latencyMs": 24444,
+          "ttftMs": 15258,
+          "costUsd": 0.043718,
+          "searchCached": false,
+          "tokens": {
+            "in": 6931,
+            "out": 995
+          },
+          "terminated": "done"
+        }
+      ],
+      "answerText": "The **Model Context Protocol (MCP)** is an open-source, open standard—originally created and released by Anthropic in November 2024—for connecting AI applications (like Claude or ChatGPT) to external systems such as data sources, tools, and workflows [3][4].\n\n**Core idea:** Rather than building a custom, one-off integration for every data source or tool an AI system needs to use, developers can build against a single standardized protocol. Anthropic describes MCP as being like \"a USB-C port for AI applications\"—just as USB-C offers one standard connector for many devices, MCP offers one standard way to connect AI apps to external systems [3].\n\n**Architecture:** MCP works through a client-server model. Developers can:\n- Expose their own data/tools through **MCP servers**, or\n- Build AI applications (**MCP clients**) that connect to those servers to access data and capabilities [4].\n\nThis enables secure, two-way connections between AI systems and things like local files, databases, content repositories, business tools (e.g., Google Drive, Slack, GitHub, Postgres), and development environments [3][4].\n\n**What it enables:**\n- AI agents accessing personal tools like Google Calendar or Notion to act as more personalized assistants\n- Coding assistants (e.g., Claude Code) generating apps directly from design tools like Figma\n- Enterprise chatbots querying multiple internal databases via chat\n- AI models controlling external hardware/software workflows, such as designing in Blender and sending output to a 3D printer [3]\n\n**Why it matters:**\n- **Developers** benefit from reduced complexity and development time when integrating AI with external systems.\n- **AI applications/agents** gain access to a broad ecosystem of data sources and tools, enhancing capability.\n- **End-users** get more capable assistants that can access their data and take actions on their behalf [3].\n\n**Ecosystem:** MCP has since been adopted broadly—supported by AI assistants such as Claude and ChatGPT, and development tools including Visual Studio Code, Cursor, and others, allowing developers to \"build once and integrate everywhere\" [3]. Early adopters at launch included companies like Block and Apollo, along with dev-tool companies such as Zed, Replit, Codeium, and Sourcegraph [4]. MCP was created at Anthropic by David Soria Parra and Justin Spahr-Summers, and is maintained as a collaborative open-source project [4]."
+    },
+    "failure": {
+      "query": "What is the capital of France?",
+      "lesson": "A provider exception (here: an invalid model name) is never masked as a plausible answer. The loop throws before any tokens stream, the client receives an SSE error event with status 502, and the run log records terminated: \"error\" with the real error string -- no silent fallback, no fabricated response.",
+      "events": [
+        {
+          "event": "error",
+          "status": 502,
+          "error": "Error: 404 {\"type\":\"error\",\"error\":{\"type\":\"not_found_error\",\"message\":\"model: claude-does-not-exist-xyz\"},\"request_id\":\"req_011CfAVsngfxfQ8MV6h2rGYr\"}"
+        }
+      ],
+      "answerText": ""
+    }
   }
 }

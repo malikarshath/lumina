@@ -12,6 +12,23 @@ type Sample = {
   terminated?: string;
   error?: string;
 };
+type TrajEvent = {
+  event: string;
+  step?: number;
+  tool?: string;
+  input?: unknown;
+  ok?: boolean;
+  ms?: number;
+  error?: string;
+  status?: number;
+  sources?: Array<{ n: number; kind: string; title: string }>;
+  answerId?: string;
+  latencyMs?: number;
+  ttftMs?: number;
+  costUsd?: number;
+  terminated?: string;
+};
+type Trajectory = { query: string; lesson: string; events: TrajEvent[]; answerText: string };
 type Report = {
   assignment: string;
   generatedAt: string;
@@ -28,7 +45,47 @@ type Report = {
   };
   checks: Check[];
   samples: Sample[];
+  trajectories?: { success?: Trajectory; failure?: Trajectory };
 };
+
+function describeEvent(e: TrajEvent): string {
+  if (e.event === "trace") {
+    return `trace: ${e.tool}(${JSON.stringify(e.input)}) -> ${e.ok ? "ok" : `FAILED: ${e.error}`} (${e.ms}ms)`;
+  }
+  if (e.event === "sources") return `sources: ${e.sources?.length ?? 0} source(s) sent to the client`;
+  if (e.event === "done") {
+    return `done: answerId=${e.answerId}, latency=${e.latencyMs}ms, ttft=${e.ttftMs}ms, cost=$${e.costUsd}, terminated=${e.terminated}`;
+  }
+  if (e.event === "error") return `error: HTTP ${e.status} — ${e.error}`;
+  return e.event;
+}
+
+function TrajectoryCard({ title, traj, tone }: { title: string; traj: Trajectory; tone: "ok" | "fail" }) {
+  return (
+    <div
+      className={`rounded-lg border p-4 ${tone === "ok" ? "border-green-900 bg-green-950/30" : "border-red-900 bg-red-950/30"}`}
+    >
+      <h3 className={`mb-1 text-sm font-semibold ${tone === "ok" ? "text-green-300" : "text-red-300"}`}>
+        {title}
+      </h3>
+      <p className="mb-2 text-sm text-neutral-300">
+        Query: <span className="italic">&ldquo;{traj.query}&rdquo;</span>
+      </p>
+      <ol className="mb-3 space-y-1 font-mono text-xs text-neutral-400">
+        {traj.events.map((e, i) => (
+          <li key={i}>
+            {i + 1}. {describeEvent(e)}
+          </li>
+        ))}
+      </ol>
+      {traj.answerText && <p className="mb-2 text-sm text-neutral-300">Answer: {traj.answerText}</p>}
+      <p className="text-sm text-neutral-400">
+        <span className="text-neutral-500">What this taught me: </span>
+        {traj.lesson}
+      </p>
+    </div>
+  );
+}
 
 export default function Evals() {
   const [report, setReport] = useState<Report | null>(null);
@@ -139,6 +196,19 @@ export default function Evals() {
               ))}
             </ol>
           </section>
+
+          {/* ---- Trajectories: one success, one real failure, every step ---- */}
+          {report.trajectories?.success && report.trajectories?.failure && (
+            <section className="mt-10">
+              <h2 className="mb-3 text-xs uppercase tracking-widest text-neutral-500">
+                Trajectories — read the process, not just the answer
+              </h2>
+              <div className="space-y-4">
+                <TrajectoryCard title="Successful trajectory" traj={report.trajectories.success} tone="ok" />
+                <TrajectoryCard title="Failing trajectory (real provider exception)" traj={report.trajectories.failure} tone="fail" />
+              </div>
+            </section>
+          )}
         </>
       )}
     </main>

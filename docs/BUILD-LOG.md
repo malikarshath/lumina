@@ -12,6 +12,41 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-17 · Session 21: /evals trajectories — one real success, one real failure
+
+**Did (2-hour push, item 3 of 4)**
+- Built `eval/capture-trajectory.mjs`: fires one real ask against a running gateway, records every
+  raw SSE event in order (no synthesizing), and merges it into `report.json`'s `trajectories.<phase>`
+  field alongside a short "what this taught me" note — without touching `bench.mjs`'s own metrics.
+- Captured a genuine failing trajectory rather than staging one: restarted the local agent with
+  `LLM_MODEL=claude-does-not-exist-xyz` (never touched the real key or Render's env), asked a normal
+  question, and got Anthropic's real `404 not_found_error` back. The SSE stream shows exactly one
+  `error` event (`status: 502`), zero tokens, and the run log for that request shows
+  `terminated: "error"` with the real message — the provider-exception path (flagged as untested in
+  Session 18) is now proven, not just logically argued.
+- Added a "Trajectories" section to `web/app/evals/page.tsx`: two cards (green/red), each listing
+  every captured event as one line (`trace: tool(input) -> ok/FAILED (Nms)`, `sources: N source(s)`,
+  `done: ...`, `error: HTTP 502 — ...`), the query, and the lesson line.
+
+**Proved**
+- `npx tsc --noEmit` and `next build` both clean.
+- Capture run 1 (real model, real key): events = `[trace, trace, trace, sources, done]` — a real
+  `web_search` → `fetch_page` → `fetch_page` sequence.
+- Capture run 2 (broken model): events = `[error]` with the actual Anthropic 404 body; `answerText`
+  is empty; the matching `runs/<id>.json` shows `terminated: "error"`, `tokens: 0`, `costUsd: 0`.
+- `next build` succeeded; served the built app locally and confirmed `/report.json` has
+  `trajectories.success` and `trajectories.failure` populated with this real data.
+- Could not visually screenshot the rendered page in this session (no browser tool available) — the
+  page is a client component that fetches `report.json` after mount, so a `curl` of the static HTML
+  shows only the shell, not the hydrated content. Verified instead via clean typecheck/build plus the
+  underlying data being correctly shaped; a real browser check is still owed before calling this done.
+
+**Next**
+- UI hookup for deck/image artifact buttons (item 4).
+- A real browser visual check of the new Trajectories section, once one's available.
+
+---
+
 ## 2026-09-17 · Session 20: quality/check.mjs — the CONTRACT and TRAJECTORY gates
 
 **Did (still inside the 2-hour push; terse by design)**
