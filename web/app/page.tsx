@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { askStream, type Source } from "@/lib/askStream";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { askStream, type Source, type TraceStep } from "@/lib/askStream";
 import {
   GATEWAY_URL,
   USER_ID,
@@ -12,6 +14,8 @@ import {
   getArtifact,
   type DocInfo,
 } from "@/lib/api";
+import { TracePanel } from "@/components/TracePanel";
+import { SourcesPanel } from "@/components/SourcesPanel";
 
 type Mode = "auto" | "web" | "docs" | "deep";
 type ArtifactUi = { kind: "deck" | "image"; status: "pending" | "ready" | "failed"; url?: string; error?: string };
@@ -27,7 +31,7 @@ export default function Home() {
   const [mode, setMode] = useState<Mode>("auto");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
-  const [trace, setTrace] = useState<{ tool: string; ok: boolean; ms: number }[]>([]);
+  const [trace, setTrace] = useState<TraceStep[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,7 +87,7 @@ export default function Home() {
 
     const sid = mode === "web" || mode === "deep" ? undefined : spaceId ?? undefined;
     await askStream(GATEWAY_URL, THREAD_ID, query, mode, USER_ID, {
-      onTrace: (d) => setTrace((t) => [...t, { tool: d.tool, ok: d.ok, ms: d.ms }]),
+      onTrace: (d) => setTrace((t) => [...t, d]),
       onSources: (s) => setSources(s),
       onToken: (text) => setAnswer((a) => a + text),
       onDone: (d) => {
@@ -126,145 +130,131 @@ export default function Home() {
   const modes: Mode[] = ["auto", "web", "docs", "deep"];
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
+    <main className="mx-auto max-w-6xl px-6 py-12">
       <h1 className="text-3xl font-bold">LUMINA</h1>
       <p className="mb-6 mt-1 text-neutral-400">
         Ask anything — cited answers from the live web and your documents.
       </p>
 
-      {/* mode toggle */}
-      <div className="mb-3 flex gap-1 text-sm">
-        {modes.map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={
-              "rounded-md px-3 py-1 capitalize " +
-              (mode === m ? "bg-white text-black" : "bg-neutral-900 text-neutral-400 hover:text-neutral-200")
-            }
-          >
-            {m}
-          </button>
-        ))}
-      </div>
-      {mode === "deep" && (
-        <p className="mb-3 text-xs text-neutral-500">
-          Plans sub-questions, researches each in parallel, and merges citations — slower, broader.
-        </p>
-      )}
-
-      <form onSubmit={onAsk} className="mb-4 flex gap-2">
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="What do you want to know?"
-          className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 outline-none focus:border-neutral-400"
-        />
-        <button disabled={loading} className="rounded-lg bg-white px-5 py-2 font-medium text-black disabled:opacity-50">
-          {loading ? "…" : "Ask"}
-        </button>
-      </form>
-
-      {/* documents panel (used when mode is docs or auto) */}
-      {mode !== "web" && mode !== "deep" && (
-        <div className="mb-6 rounded-lg border border-neutral-800 p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs uppercase tracking-widest text-neutral-500">Your documents</span>
-            <label className="cursor-pointer rounded-md bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700">
-              + Upload
-              <input ref={fileRef} type="file" accept=".txt,.md,.pdf" onChange={onUpload} className="hidden" />
-            </label>
-          </div>
-          {docs.length === 0 ? (
-            <p className="text-sm text-neutral-600">No documents yet. Upload a .txt, .md, or .pdf to search it.</p>
-          ) : (
-            <ul className="space-y-1 text-sm">
-              {docs.map((d) => (
-                <li key={d.docId} className="flex justify-between">
-                  <span className="truncate pr-4">{d.title}</span>
-                  <span className={d.status === "indexed" ? "text-green-400" : d.status === "failed" ? "text-red-400" : "text-neutral-500"}>
-                    {d.status}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {trace.length > 0 && (
-        <div className="mb-4 space-y-1 text-sm text-neutral-500">
-          {trace.map((t, i) => (
-            <div key={i}>🔍 {t.tool} {t.ok ? "✓" : "✗"} · {t.ms}ms</div>
-          ))}
-        </div>
-      )}
-
-      {error && (
-        <div className="mb-4 rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">{error}</div>
-      )}
-
-      {answer && <div className="mb-4 whitespace-pre-wrap leading-relaxed">{answer}</div>}
-
-      {answerId && !loading && (
-        <div className="mb-4 flex gap-2">
-          <button
-            onClick={() => makeArtifact("deck")}
-            disabled={artifact?.status === "pending"}
-            className="rounded-md bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-50"
-          >
-            📊 Make a deck
-          </button>
-          <button
-            onClick={() => makeArtifact("image")}
-            disabled={artifact?.status === "pending"}
-            className="rounded-md bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-50"
-          >
-            🎨 Generate image
-          </button>
-        </div>
-      )}
-
-      {artifact && (
-        <div className="mb-8 rounded-lg border border-neutral-800 p-3 text-sm">
-          {artifact.status === "pending" && (
-            <span className="text-neutral-400">Generating your {artifact.kind}…</span>
-          )}
-          {artifact.status === "failed" && (
-            <span className="text-red-400">Failed: {artifact.error}</span>
-          )}
-          {artifact.status === "ready" && artifact.kind === "deck" && (
-            <a href={artifact.url} className="text-blue-400 hover:underline">
-              ⬇️ Download deck (.pptx)
-            </a>
-          )}
-          {artifact.status === "ready" && artifact.kind === "image" && artifact.url && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={artifact.url} alt="Generated illustration" className="max-w-xs rounded-md" />
-          )}
-        </div>
-      )}
-
-      {sources.length > 0 && (
-        <section>
-          <h2 className="mb-3 text-xs uppercase tracking-widest text-neutral-500">Sources</h2>
-          <ol className="space-y-3">
-            {sources.map((s) => (
-              <li key={s.n} className="text-sm">
-                <span className="text-neutral-500">[{s.n}]</span>{" "}
-                {s.url ? (
-                  <a href={s.url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">
-                    {s.title}
-                  </a>
-                ) : (
-                  <span className="text-neutral-200">📄 {s.title}</span>
-                )}
-                {s.snippet && <p className="mt-0.5 text-neutral-500">{s.snippet.slice(0, 160)}…</p>}
-              </li>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
+        {/* ---- main chat column ---- */}
+        <div>
+          {/* mode toggle */}
+          <div className="mb-3 flex gap-1 text-sm">
+            {modes.map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={
+                  "rounded-md px-3 py-1 capitalize " +
+                  (mode === m ? "bg-white text-black" : "bg-neutral-900 text-neutral-400 hover:text-neutral-200")
+                }
+              >
+                {m}
+              </button>
             ))}
-          </ol>
-        </section>
-      )}
+          </div>
+          {mode === "deep" && (
+            <p className="mb-3 text-xs text-neutral-500">
+              Plans sub-questions, researches each in parallel, and merges citations — slower, broader.
+            </p>
+          )}
+
+          <form onSubmit={onAsk} className="mb-4 flex gap-2">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="What do you want to know?"
+              className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 outline-none focus:border-neutral-400"
+            />
+            <button disabled={loading} className="rounded-lg bg-white px-5 py-2 font-medium text-black disabled:opacity-50">
+              {loading ? "…" : "Ask"}
+            </button>
+          </form>
+
+          {/* documents panel (used when mode is docs or auto) */}
+          {mode !== "web" && mode !== "deep" && (
+            <div className="mb-6 rounded-lg border border-neutral-800 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs uppercase tracking-widest text-neutral-500">Your documents</span>
+                <label className="cursor-pointer rounded-md bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700">
+                  + Upload
+                  <input ref={fileRef} type="file" accept=".txt,.md,.pdf" onChange={onUpload} className="hidden" />
+                </label>
+              </div>
+              {docs.length === 0 ? (
+                <p className="text-sm text-neutral-600">No documents yet. Upload a .txt, .md, or .pdf to search it.</p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {docs.map((d) => (
+                    <li key={d.docId} className="flex justify-between">
+                      <span className="truncate pr-4">{d.title}</span>
+                      <span className={d.status === "indexed" ? "text-green-400" : d.status === "failed" ? "text-red-400" : "text-neutral-500"}>
+                        {d.status}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {error && (
+            <div className="mb-4 rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">{error}</div>
+          )}
+
+          {answer && (
+            <div className="prose prose-invert prose-sm mb-4 max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+            </div>
+          )}
+
+          {answerId && !loading && (
+            <div className="mb-4 flex gap-2">
+              <button
+                onClick={() => makeArtifact("deck")}
+                disabled={artifact?.status === "pending"}
+                className="rounded-md bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-50"
+              >
+                📊 Make a deck
+              </button>
+              <button
+                onClick={() => makeArtifact("image")}
+                disabled={artifact?.status === "pending"}
+                className="rounded-md bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-50"
+              >
+                🎨 Generate image
+              </button>
+            </div>
+          )}
+
+          {artifact && (
+            <div className="mb-8 rounded-lg border border-neutral-800 p-3 text-sm">
+              {artifact.status === "pending" && (
+                <span className="text-neutral-400">Generating your {artifact.kind}…</span>
+              )}
+              {artifact.status === "failed" && (
+                <span className="text-red-400">Failed: {artifact.error}</span>
+              )}
+              {artifact.status === "ready" && artifact.kind === "deck" && (
+                <a href={artifact.url} className="text-blue-400 hover:underline">
+                  ⬇️ Download deck (.pptx)
+                </a>
+              )}
+              {artifact.status === "ready" && artifact.kind === "image" && artifact.url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={artifact.url} alt="Generated illustration" className="max-w-xs rounded-md" />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ---- right sidebar: collapsible Trace + Sources ---- */}
+        <aside className="space-y-3 lg:sticky lg:top-12 lg:self-start">
+          <TracePanel trace={trace} />
+          <SourcesPanel sources={sources} />
+        </aside>
+      </div>
     </main>
   );
 }

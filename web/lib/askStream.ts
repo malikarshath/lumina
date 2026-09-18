@@ -9,8 +9,10 @@ export type Source = {
   snippet?: string;
 };
 
+export type TraceStep = { tool: string; input: unknown; ok: boolean; ms: number; error?: string };
+
 export type AskHandlers = {
-  onTrace?: (d: { tool: string; input: unknown; ok: boolean; ms: number }) => void;
+  onTrace?: (d: TraceStep) => void;
   onSources?: (sources: Source[]) => void;
   onToken?: (text: string) => void;
   onDone?: (d: { answerId: string; latencyMs: number; ttftMs: number; terminated: string }) => void;

@@ -12,6 +12,65 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-17 · Session 25: UI redesign — collapsible Trace/Sources sidebar, markdown
+
+**Did**
+- Malik pointed out everything was rendering on a single flat page and asked for a Perplexity-style
+  layout: separate collapsible boxes for Trace and Sources on the right, and asked for an opinion on
+  DaisyUI. Recommendation given and followed: DaisyUI is a Tailwind plugin (no runtime JS), fits the
+  existing Tailwind setup, and ships `collapse`/`badge` components that are exactly what this needs.
+- Installed `daisyui`, `react-markdown`, `remark-gfm`, `@tailwindcss/typography`. Registered a custom
+  DaisyUI theme ("lumina") in `tailwind.config.ts` matching the app's existing neutral-950 dark
+  palette and accent colors, applied via `data-theme="lumina"` on `<html>`.
+- Rewrote `web/app/page.tsx` into a two-column layout: main chat column (unchanged content, now
+  markdown-rendered) + a right sidebar with two independently-collapsible DaisyUI `collapse` boxes,
+  `TracePanel` and `SourcesPanel` (new `web/components/`), each with an item-count badge.
+- `TracePanel` fixes a real gap from before: the old inline trace list only showed `{tool} {ok/fail}
+  {ms}` and silently dropped `input`/`error`. Now shows the tool's input (query/URL) and, on failure,
+  the actual error text — this matters far more for Deep Search's dozen parallel calls than it did
+  for Quick's 1-3.
+- Answers now render through `<ReactMarkdown remarkPlugins={[remarkGfm]}>` inside a `prose
+  prose-invert prose-sm` wrapper, instead of a raw `whitespace-pre-wrap` string — headings, bold,
+  lists from Deep Search's synthesis output now render properly instead of as flat text.
+
+**Proved**
+- `npx tsc --noEmit` and `next build` both clean.
+- Hit a real, non-obvious build failure along the way: `npm install daisyui` (no version pin)
+  installed **DaisyUI v5**, which requires Tailwind v4's CSS-first `@plugin` syntax; this project is
+  on Tailwind v3. The classic `plugins: [require("daisyui")]` + `daisyui: {...}` config I wrote is
+  the v3-era API, and v5's generated CSS used syntax the Next 14 build's CSS minifier couldn't parse
+  (`CssSyntaxError: Missed semicolon`). Fixed by installing `daisyui@^4`, the version built for
+  Tailwind v3 — clean build after.
+- Then spent real effort chasing a theming bug that turned out not to exist: grepped the built CSS
+  for the literal string `"lumina"` and found nothing, and the first `:root{...}` block I found had
+  DaisyUI's stock default colors, not mine. Root cause of *that* confusion: DaisyUI emits an
+  `@supports not (color:oklch(...))` legacy-browser fallback block first, with generic hardcoded hex
+  values unrelated to any configured theme, before the real, modern `:root{...}` rule that uses
+  oklch. Found the actual rule (`--p:62.3083% 0.188015 259.814527` — oklch for `#3b82f6`, exactly my
+  configured primary color) and confirmed the custom theme was correct all along.
+- Full local stack (agent + gateway + web, built with `NEXT_PUBLIC_GATEWAY_URL` pointed at the local
+  gateway): page loads with no runtime/hydration errors in the server log; grepped the built JS
+  bundle and confirmed `collapse-arrow`, `prose-invert`, `badge-sm` all compiled in; fired one real
+  ask through the full path and confirmed real trace/sources/done data reaches exactly the shapes the
+  new components expect.
+- Still no browser tool available to click the actual collapse toggles or see it rendered — verified
+  through build output, bundle contents, and the underlying data shape instead. A real visual
+  check is still owed.
+
+**Learned**
+- Never `npm install <package>` without a version constraint when the package has a major version
+  with a breaking architectural change (Tailwind v3 vs v4 plugin API) that isn't obvious from the
+  install command alone — pin or check compatibility first.
+- When a themed CSS output "looks wrong," check *which* rule in the cascade you're actually reading
+  before concluding the config is broken. Legacy `@supports not (...)` fallback blocks and
+  `prefers-color-scheme` media queries can look like the real theme at a glance.
+
+**Next**
+- A real browser click-through of the collapse toggles, the mode switcher, and a Deep Search run in
+  the new layout, once a browser tool is available.
+
+---
+
 ## 2026-09-17 · Session 24: Deep Search — planner, parallel sub-question research, merge
 
 **Did**
