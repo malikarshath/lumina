@@ -38,3 +38,6 @@ web/public/report.json
 # Staged build of the PROVIDED UI (see build-provided-ui.mjs). Build output,
 # regenerate it rather than commit it.
 provided-ui-dist/
+
+# Local safety copy taken before emptying Atlas for the final benchmark run.
+.db-backup/
