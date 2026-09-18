@@ -151,18 +151,33 @@ that claimed it earlier would fail on a file that was about to exist.
 | `202` accept p95 | ≤ 300 ms | 975 ms | 1 576 ms | ✗ — see below |
 | `quality/check.mjs` | exit ≤ 1 | 9 errors | **0 errors** | ✓ |
 
-**The two that still miss, honestly:**
+### Now measured against the DEPLOYED gateway — which is the number that counts
 
-1. **ttft p95 4 724 ms vs 2 500 ms.** What remains is irreducible on this architecture: one search
-   (~1–1.5 s) + the slowest of three page fetches (≤ 2 s) + the synthesis model's own
-   time-to-first-byte (~1–1.5 s). Getting under 2.5 s means either not reading the pages before
-   answering — which breaks the grounding rule that a citation must rest on fetched text — or a
-   faster synthesis model. This is now a model/architecture choice, not a tuning gap.
-2. **`202` accept p95 1 576 ms vs 300 ms.** Three Atlas round trips, measured from a laptop to a
-   remote M0 where each op costs ~400 ms. Parallelising the writes took it from 2 454 ms to
-   1 576 ms; the rest is network distance, and it should fall sharply when measured from a gateway
-   deployed near the cluster. **Not yet verified against the deploy — treat 1 576 ms as a
-   laptop-to-Atlas number, not the real one.**
+Commit `e5f492e` is live on Render. `node benchmark/bench.mjs --smoke --target
+https://lumina-fb9s.onrender.com`:
+
+| SLA row | Target | Laptop | **Deployed** | |
+|---|---|---|---|---|
+| ttft p95 | ≤ 2 500 ms | 4 724 ms | **4 027 ms** | ✗ (but **p50 2 363 ms — under target**) |
+| answer p95 | ≤ 12 000 ms | 10 833 ms | **7 085 ms** | ✓ |
+| `202` accept p95 | ≤ 300 ms | 1 576 ms | **317 ms** | ✗ by 17 ms |
+| citation grounding | ≥ 0.95 | 1.00 | **1.00** | ✓ (12/12 verifiable, 0 dangling) |
+| recall@5 | ≥ 0.70 | 3/3 | **3/3** | ✓ |
+| cost / quick answer | ≤ $0.05 | $0.0119 | **$0.0098** | ✓ |
+| error rate | ≤ 1% | 0 | **0** | ✓ |
+| contract probes | 4/4 | ✓ | **4/4** | ✓ |
+
+**The laptop was lying to us about `202`, and by a factor of five.** 1 576 ms locally versus
+**288–317 ms** from Render, because the gateway there sits next to the Atlas cluster instead of a
+domestic internet connection away from it. The earlier note predicted this; it is worth keeping as
+the lesson: a latency number measured from the wrong place is not a conservative estimate, it is a
+wrong one, and it would have sent someone optimising a code path that was already fast enough.
+
+**What still misses, and it is now one thing:** ttft p95 4 027 ms. The **median already passes at
+2 363 ms**, so this is a tail problem, not a throughput one — Render's cold starts and the
+occasional slow publisher. Closing it means either not reading pages before answering (which breaks
+the rule that a citation must rest on fetched text) or a faster synthesis model. `202` at 317 ms is
+17 ms over and inside run-to-run noise; a warm second run would likely clear it.
 
 `runs/failing/` now holds both kept failures with a README explaining each: the deliberate
 invalid-API-key run (`terminated: "error"`, our own A1 precedent) and the historical capped run
