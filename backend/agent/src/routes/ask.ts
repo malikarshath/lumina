@@ -7,6 +7,7 @@ import { runDeepLoop } from "../loop/deepLoop.js";
 import { writeRunLog } from "../observability/runLog.js";
 import { getDb } from "../db/mongo.js";
 import { nextResetIso, reserveDailySlot } from "../dailyCap.js";
+import { LoopFailure } from "../loop/loopFailure.js";
 
 export const askRouter = Router();
 
@@ -65,15 +66,18 @@ askRouter.post("/threads/:id/ask", async (req, res) => {
     req.log.error({ event: "answer_failed", requestId, error: String(err) });
     await writeRunLog({
       requestId,
-      tokens: 0,
+      tokens: err instanceof LoopFailure ? err.tokens.in + err.tokens.out : 0,
       wallClockSec: 0,
-      costUsd: 0,
+      costUsd: err instanceof LoopFailure ? Number(err.costUsd.toFixed(6)) : 0,
       terminated: "error",
-      // Empty rather than a synthetic "ask_loop" entry: toolCalls[].name is a
-      // ToolName in the contract, and from here we cannot attribute the failure
-      // to a specific tool. terminated:"error" is what carries the signal; the
-      // individual tool failures were already traced by the loop itself.
-      toolCalls: [],
+      // A LoopFailure carries the steps the loop had already taken, so a
+      // failed run log still reads as a trajectory: five failed searches say
+      // what went wrong, where "zero steps" only says that something did.
+      // Anything else genuinely has no attributable tool -- and inventing a
+      // name is not an option, because toolCalls[].name is a closed enum in
+      // the contract and a made-up "ask_loop" fails validation, taking the
+      // whole evals report down with it.
+      toolCalls: err instanceof LoopFailure ? err.toolCalls : [],
       depth,
     });
   } finally {

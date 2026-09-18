@@ -11,6 +11,7 @@ import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
 import { webSearch, type WebResult } from "../tools/webSearch.js";
 import { getCached, setCached, SearchCacheTally } from "../tools/searchCache.js";
 import { loadThreadHistory } from "./threadHistory.js";
+import { LoopFailure } from "./loopFailure.js";
 import { fetchPage } from "../tools/fetchPage.js";
 import { searchDocuments, type DocHit } from "../rag/search.js";
 import { recallMemory, saveMemory, type Memory } from "../rag/memory.js";
@@ -297,12 +298,22 @@ export async function runAskLoop(
   // every leg we asked for errored, this is a 502, not an empty answer.
   const askedLegs = [webLeg, docLeg].filter(Boolean) as Array<{ ok: boolean }>;
   if (!sources.length && askedLegs.length > 0 && askedLegs.every((l) => !l.ok)) {
-    throw new Error("retrieval failed: every search leg threw");
+    throw new LoopFailure(
+      "retrieval failed: every search leg threw",
+      toolCallLog,
+      { in: inTok, out: outTok },
+      searchTally.liveCalls * 0.008,
+    );
   }
   const fetchAttempts = fetched.length;
   const fetchFailures = fetched.filter((f) => !f.ok).length;
   if (!sources.length && fetchAttempts > 0 && fetchFailures === fetchAttempts && !docLeg?.hits.length) {
-    throw new Error(`retrieval failed: all ${fetchAttempts} page fetches threw`);
+    throw new LoopFailure(
+      `retrieval failed: all ${fetchAttempts} page fetches threw`,
+      toolCallLog,
+      { in: inTok, out: outTok },
+      searchTally.liveCalls * 0.008,
+    );
   }
 
   // Sources always precede the first token, so the UI can render citation

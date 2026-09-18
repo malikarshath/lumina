@@ -13,6 +13,7 @@ import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
 import { webSearch } from "../tools/webSearch.js";
 import { getCached, setCached, SearchCacheTally } from "../tools/searchCache.js";
 import { loadThreadHistory } from "./threadHistory.js";
+import { LoopFailure } from "./loopFailure.js";
 import { fetchPage } from "../tools/fetchPage.js";
 import { getDb, isDbConfigured } from "../db/mongo.js";
 import type { ToolCallLog } from "../observability/runLog.js";
@@ -261,10 +262,20 @@ export async function runDeepLoop(
   // records terminated: "error".
   if (sources.length === 0) {
     if (searchOk === 0 && searchFailed > 0) {
-      throw new Error(`deep search failed: all ${searchFailed} sub-question searches threw`);
+      throw new LoopFailure(
+        `deep search failed: all ${searchFailed} sub-question searches threw`,
+        toolCallLog,
+        { in: inTok, out: outTok },
+        (inTok / 1e6) * 3.0 + (outTok / 1e6) * 15.0,
+      );
     }
     if (fetchOk === 0 && fetchFailed > 0) {
-      throw new Error(`deep search failed: all ${fetchFailed} page fetches threw`);
+      throw new LoopFailure(
+        `deep search failed: all ${fetchFailed} page fetches threw`,
+        toolCallLog,
+        { in: inTok, out: outTok },
+        (inTok / 1e6) * 3.0 + (outTok / 1e6) * 15.0,
+      );
     }
   }
 
