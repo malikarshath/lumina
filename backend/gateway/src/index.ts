@@ -11,12 +11,28 @@ const app = express();
 const AGENT_URL = process.env.AGENT_URL ?? "http://localhost:8000";
 // Hosts like Render/Fly inject PORT; fall back to GATEWAY_PORT, then 8787.
 const PORT = Number(process.env.PORT || process.env.GATEWAY_PORT) || 8787;
-const CORS_ORIGIN = process.env.CORS_ORIGIN ?? "http://localhost:3000";
+// CORS_ORIGIN is a comma-separated allow-list, not a single value. One string
+// was enough while there was one UI; the moment a second front end exists --
+// the provided acceptance-test UI alongside our own -- the gateway kept
+// echoing the first origin back at every caller, so the browser saw a
+// mismatched Access-Control-Allow-Origin and reported it as "Failed to fetch",
+// which reads like the server is down rather than like a policy decision.
+const CORS_ORIGINS = (process.env.CORS_ORIGIN ?? "http://localhost:3000")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
 
 // exposedHeaders is what lets browser JS actually read x-request-id off the
 // response; without it CORS hides the header and a user cannot quote the id
 // that would let us find their request in the logs.
-app.use(cors({ origin: CORS_ORIGIN, exposedHeaders: ["x-request-id"] }));
+app.use(
+  cors({
+    // "*" stays a deliberate escape hatch for local debugging; otherwise an
+    // unlisted origin is refused rather than quietly allowed.
+    origin: CORS_ORIGINS.includes("*") ? true : CORS_ORIGINS,
+    exposedHeaders: ["x-request-id"],
+  }),
+);
 app.use(
   pinoHttp({
     // Reuse the inbound X-Request-Id or mint one, echo it, forward it to the
