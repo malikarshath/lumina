@@ -34,3 +34,7 @@ web/public/report.json
 # comparison only. Never committed: a duplicate of packages/contract in the
 # repo would look like the provided contract was edited.
 .pre-official-backup/
+
+# Staged build of the PROVIDED UI (see build-provided-ui.mjs). Build output,
+# regenerate it rather than commit it.
+provided-ui-dist/
