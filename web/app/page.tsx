@@ -13,7 +13,7 @@ import {
   type DocInfo,
 } from "@/lib/api";
 
-type Mode = "auto" | "web" | "docs";
+type Mode = "auto" | "web" | "docs" | "deep";
 type ArtifactUi = { kind: "deck" | "image"; status: "pending" | "ready" | "failed"; url?: string; error?: string };
 
 // One fixed thread for this single-thread UI. Must match the contract's
@@ -81,7 +81,7 @@ export default function Home() {
     setAnswerId(null);
     setArtifact(null);
 
-    const sid = mode === "web" ? undefined : spaceId ?? undefined;
+    const sid = mode === "web" || mode === "deep" ? undefined : spaceId ?? undefined;
     await askStream(GATEWAY_URL, THREAD_ID, query, mode, USER_ID, {
       onTrace: (d) => setTrace((t) => [...t, { tool: d.tool, ok: d.ok, ms: d.ms }]),
       onSources: (s) => setSources(s),
@@ -123,7 +123,7 @@ export default function Home() {
     setArtifact({ kind, status: "failed", error: "timed out waiting for the artifact" });
   }
 
-  const modes: Mode[] = ["auto", "web", "docs"];
+  const modes: Mode[] = ["auto", "web", "docs", "deep"];
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-12">
@@ -147,6 +147,11 @@ export default function Home() {
           </button>
         ))}
       </div>
+      {mode === "deep" && (
+        <p className="mb-3 text-xs text-neutral-500">
+          Plans sub-questions, researches each in parallel, and merges citations — slower, broader.
+        </p>
+      )}
 
       <form onSubmit={onAsk} className="mb-4 flex gap-2">
         <input
@@ -161,7 +166,7 @@ export default function Home() {
       </form>
 
       {/* documents panel (used when mode is docs or auto) */}
-      {mode !== "web" && (
+      {mode !== "web" && mode !== "deep" && (
         <div className="mb-6 rounded-lg border border-neutral-800 p-4">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs uppercase tracking-widest text-neutral-500">Your documents</span>

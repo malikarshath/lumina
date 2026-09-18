@@ -12,6 +12,56 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-17 · Session 24: Deep Search — planner, parallel sub-question research, merge
+
+**Did**
+- Malik checked LUMINA against a full Perplexity-parity checklist. Everything scored was already
+  built; the one real gap was Deep Search (query decomposition, per-sub-question research, merged
+  citations) and keeping it a genuinely separate mode from Quick — both explicitly listed as "Could"
+  (stretch, ungraded) in PRD 5.1, but a real missing capability, not a rubric technicality.
+- Added `Mode = "deep"` to the contract (`packages/contract/src/primitives.ts`) — the only shared
+  file this touches; everything else is new.
+- Built `backend/agent/src/loop/deepLoop.ts`, a fully separate function from `askLoop.ts`, with its
+  own budget (`DEEP_MAX_SUBQUESTIONS=4`, `DEEP_RESULTS_PER_SUBQ=2`), never touching
+  `MAX_TOOL_CALLS`/`MAX_WALL_CLOCK_MS`. Pipeline: one planning call → JSON `{subQuestions}` → search
+  every sub-question **concurrently** (same parallel-I/O pattern as Session 23's latency fix) → fetch
+  every sub-question's top results **concurrently, all at once** (not nested per sub-question — the
+  actual "broader without proportionally slower" win) → merge into one numbered source list → one
+  synthesis call over all of it, citing `[n]` across sub-questions. Empty retrieval still says so and
+  cites nothing, same rule as the quick loop.
+- `ask.ts` dispatches `mode: "deep"` to `runDeepLoop` instead of `runAskLoop` — literally separate
+  code paths, satisfying "Quick and Deep must stay separate" at the routing level, not just in name.
+- `web/app/page.tsx`: added `"deep"` as a fourth mode button, a one-line explainer ("Plans
+  sub-questions..."), and made it skip the documents panel/spaceId like `web` mode does.
+
+**Proved**
+- `npx tsc --noEmit` clean across contract + agent + web; `npm run build:backend` and `next build`
+  both clean.
+- Real local run, "What are the main causes and effects of the 2008 financial crisis?": planner
+  produced 4 sub-questions, 4 `web_search` calls ran concurrently (each ~3.4-5.8s — sequential would
+  have been ~16s+), 8 `fetch_page` calls ran concurrently across all four sub-questions at once (one
+  genuinely 403'd — `custommapposter.com` — logged `ok:false` with the real error, everything else
+  kept going). 7 sources merged, streamed synthesis cited `[1]`-`[7]` correctly, and — notably —
+  explicitly called out where a fetched source was navigation junk, a table of contents, or an
+  unreadable PDF rather than fabricating content for it (the exact "honest when retrieval is thin"
+  behavior the rubric's human-gate item wants, even though this mode itself isn't scored).
+- Re-ran through the full gateway path (not just the agent directly) with a second real question —
+  13 trace steps, real `done` event, confirms the UI's actual request path works end to end.
+
+**Learned**
+- Deep Search doesn't need (and shouldn't have) its own agentic tool loop per sub-question — that
+  would multiply LLM round-trips and cost N-fold. Deterministic "search then fetch top-K" per
+  sub-question, run concurrently, gets genuinely broader evidence without the compounding latency or
+  cost of N independent interactive loops.
+- This mode is not benchmarked in `sla.json`/`bench.mjs` and deliberately so — its cost/latency
+  profile is supposed to be different from Quick's (more sub-questions, more fetches, longer), same
+  as real Perplexity's Pro/Deep Research vs its default search.
+
+**Next**
+- Nothing outstanding was assigned beyond this; the explicit list (latency, then Deep Search) is done.
+
+---
+
 ## 2026-09-17 · Session 23: parallel tool execution — a real, honest latency win
 
 **Did**

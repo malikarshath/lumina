@@ -3,6 +3,7 @@ import { Router } from "express";
 import { AskRequest } from "@lumina/contract";
 import { sseInit, sseSend } from "../sse.js";
 import { runAskLoop } from "../loop/askLoop.js";
+import { runDeepLoop } from "../loop/deepLoop.js";
 import { writeRunLog } from "../observability/runLog.js";
 import { getDb } from "../db/mongo.js";
 
@@ -31,7 +32,10 @@ askRouter.post("/threads/:id/ask", async (req, res) => {
 
   sseInit(res);
   try {
-    const summary = await runAskLoop(parsed.data, (event, data) => sseSend(res, event, data), userId, req.params.id);
+    // Deep Search is a fully separate code path and budget from the
+    // interactive quick loop -- "Quick and Deep must stay separate".
+    const runLoop = parsed.data.mode === "deep" ? runDeepLoop : runAskLoop;
+    const summary = await runLoop(parsed.data, (event, data) => sseSend(res, event, data), userId, req.params.id);
     // One line a grader can grep by requestId and reconcile against /stats.
     req.log.info({ event: "answer_completed", requestId, ...summary });
     await writeRunLog({ requestId, ...summary });

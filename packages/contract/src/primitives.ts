@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const Mode = z.enum(["auto", "web", "docs"]);
-export type Mode = z.infer<typeof Mode>;   // -> "auto" | "web" | "docs"
+export const Mode = z.enum(["auto", "web", "docs", "deep"]);
+export type Mode = z.infer<typeof Mode>;   // -> "auto" | "web" | "docs" | "deep"
 
 export const ThreadId = z.string().regex(/^thr_/, "must start with thr_");
 export type ThreadId = z.infer<typeof ThreadId>;
