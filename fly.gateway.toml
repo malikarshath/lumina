@@ -4,10 +4,13 @@
 # Deploy:  fly deploy -c fly.gateway.toml
 
 app = "lumina-gateway-malik"
-# bom (Mumbai) is deprecated for new resources; sin (Singapore) is the
-# nearest region Fly will still provision into, and it keeps the hop to the
-# Atlas cluster short.
-primary_region = "sin"
+# Put the compute next to what it talks to. The Atlas cluster is in AWS
+# us-west-2 (Oregon) -- the shard DNS resolves to ec2-...us-west-2 -- and
+# Anthropic, OpenAI and Tavily are US-hosted too. From sin (Singapore) a single
+# Mongo round trip measured 188ms, and the upload path makes several of them,
+# which is most of why 202-accept sat at 1385ms against a 300ms target.
+# sjc is the closest Fly region to Oregon.
+primary_region = "sjc"
 
 [build]
   dockerfile = "Dockerfile"

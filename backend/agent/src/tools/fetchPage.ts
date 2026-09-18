@@ -13,12 +13,31 @@ const FETCH_MAX_CHARS = Number(process.env.FETCH_MAX_CHARS) || 2000;
 // more honest than waiting to be sure.
 const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS) || 2000;
 
+/**
+ * The page answered, and the answer was no.
+ *
+ * A 403 from a publisher that blocks crawlers is not a fault in this system --
+ * it is the web declining, and it is information. Treating it the same as a
+ * DNS failure or a dead socket means one paywalled result can turn a working
+ * request into a 502. The loops use this to tell "we could not read anything"
+ * (an honest empty answer) apart from "our fetching is broken" (fail loud).
+ */
+export class PageDeclined extends Error {
+  constructor(
+    readonly status: number,
+    url: string,
+  ) {
+    super(`fetch_page ${status} for ${url}`);
+    this.name = "PageDeclined";
+  }
+}
+
 export async function fetchPage(url: string, maxChars = FETCH_MAX_CHARS): Promise<string> {
   const res = await fetch(url, {
     headers: { "User-Agent": "LUMINA/1.0 (+research assistant)" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
-  if (!res.ok) throw new Error(`fetch_page ${res.status} for ${url}`);
+  if (!res.ok) throw new PageDeclined(res.status, url);
 
   const html = await res.text();
   const text = html

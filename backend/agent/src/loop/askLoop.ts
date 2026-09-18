@@ -12,8 +12,9 @@ import { webSearch, type WebResult } from "../tools/webSearch.js";
 import { getCached, setCached, SearchCacheTally } from "../tools/searchCache.js";
 import { loadThreadHistory } from "./threadHistory.js";
 import { LoopFailure } from "./loopFailure.js";
-import { fetchPage } from "../tools/fetchPage.js";
+import { fetchPage, PageDeclined } from "../tools/fetchPage.js";
 import { searchDocuments, type DocHit } from "../rag/search.js";
+import { bestPassage } from "../rag/passage.js";
 import { recallMemory, saveMemory, type Memory } from "../rag/memory.js";
 import { getDb, isDbConfigured } from "../db/mongo.js";
 import type { ToolCallLog } from "../observability/runLog.js";
@@ -238,7 +239,7 @@ export async function runAskLoop(
 
   type Fetched =
     | { r: WebResult; ok: true; text: string; ms: number }
-    | { r: WebResult; ok: false; error: string; ms: number };
+    | { r: WebResult; ok: false; error: string; ms: number; declined: boolean };
 
   const fetched: Fetched[] = await Promise.all(
     targets.map(async (r): Promise<Fetched> => {
@@ -246,7 +247,9 @@ export async function runAskLoop(
       try {
         return { r, ok: true, text: await fetchPage(r.url), ms: Date.now() - f0 };
       } catch (err) {
-        return { r, ok: false, error: String(err), ms: Date.now() - f0 };
+        // `declined` marks "the publisher said no", which is a result, not an
+        // outage. Only genuine transport failures should fail the request.
+        return { r, ok: false, error: String(err), ms: Date.now() - f0, declined: err instanceof PageDeclined };
       }
     }),
   );
@@ -268,10 +271,11 @@ export async function runAskLoop(
       kind: "web",
       title: f.r.title || f.r.url,
       url: f.r.url,
-      // Prefer the search extract (a passage lifted from the page) and fall
-      // back to the page's own opening text, so a snippet is always something
-      // genuinely present in the document it points at.
-      snippet: f.r.snippet || f.text.slice(0, 300) || f.r.title || f.r.url,
+      // Quote the page WE fetched, not the search provider's extract. A
+      // grounding check re-fetches the URL and looks for our snippet in it;
+      // Tavily's extract is condensed and often absent verbatim, so an honest
+      // citation scores as ungrounded. Falls back only if the page was empty.
+      snippet: bestPassage(f.text, req.query) || f.r.snippet || f.r.title || f.r.url,
     });
     evidence.push(`[${n}] ${f.r.title}\n${f.text}`);
   }
@@ -305,11 +309,15 @@ export async function runAskLoop(
       searchTally.liveCalls * 0.008,
     );
   }
-  const fetchAttempts = fetched.length;
-  const fetchFailures = fetched.filter((f) => !f.ok).length;
-  if (!sources.length && fetchAttempts > 0 && fetchFailures === fetchAttempts && !docLeg?.hits.length) {
+  // Only fail loud when the fetching itself is broken. If every page simply
+  // refused us (403, 404, paywall), search worked and the honest answer is
+  // "I could not read any of these", not a 502 -- the alternative is letting
+  // one blocked publisher turn a working request into an outage.
+  const attempted = fetched.filter((f) => !f.ok);
+  const brokeDown = attempted.filter((f) => !f.ok && !f.declined);
+  if (!sources.length && brokeDown.length > 0 && brokeDown.length === attempted.length && !docLeg?.hits.length) {
     throw new LoopFailure(
-      `retrieval failed: all ${fetchAttempts} page fetches threw`,
+      `retrieval failed: all ${attempted.length} page fetches failed at the transport layer`,
       toolCallLog,
       { in: inTok, out: outTok },
       searchTally.liveCalls * 0.008,
@@ -324,8 +332,10 @@ export async function runAskLoop(
   if (!evidence.length) {
     // Genuinely empty retrieval: say so, cite nothing.
     ttftMs = Date.now() - start;
-    answerText =
-      "I couldn't retrieve anything that answers this, so I'd rather say that than guess. Try rephrasing it, or narrowing it to a specific source.";
+    const declined = fetched.filter((f) => !f.ok && f.declined).length;
+    answerText = declined
+      ? `I found ${declined} page(s) for this, but every one of them refused an automated read (paywall or bot block), so I have nothing I can honestly cite. Try a different phrasing, or open the sources yourself.`
+      : "I couldn't retrieve anything that answers this, so I'd rather say that than guess. Try rephrasing it, or narrowing it to a specific source.";
     emit("token", TokenEvent.parse({ text: answerText }));
   } else {
     const memoryBlock = memories.mems.length

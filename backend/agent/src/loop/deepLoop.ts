@@ -13,8 +13,9 @@ import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
 import { webSearch } from "../tools/webSearch.js";
 import { getCached, setCached, SearchCacheTally } from "../tools/searchCache.js";
 import { loadThreadHistory } from "./threadHistory.js";
+import { bestPassage } from "../rag/passage.js";
 import { LoopFailure } from "./loopFailure.js";
-import { fetchPage } from "../tools/fetchPage.js";
+import { fetchPage, PageDeclined } from "../tools/fetchPage.js";
 import { getDb, isDbConfigured } from "../db/mongo.js";
 import type { ToolCallLog } from "../observability/runLog.js";
 import type { RunSummary } from "./askLoop.js";
@@ -43,16 +44,38 @@ evidence from across the sub-questions. Cite every factual claim with [n], where
 the numbered sources you were given. Never invent a citation. If a sub-question's evidence
 was thin, say so plainly for that part rather than filling the gap from your own knowledge.`;
 
+/**
+ * Recovers the complete entries from a JSON array that was cut off mid-write.
+ *
+ * Only whole `{...}` objects are taken, so a half-written question can never
+ * become a sub-question. This is salvage, not repair: if it cannot recover
+ * enough entries the caller still fails loudly.
+ */
+function salvageSubQuestions(text: string): Array<{ question: string; reason?: string }> {
+  const out: Array<{ question: string; reason?: string }> = [];
+  for (const m of text.matchAll(/\{[^{}]*\}/g)) {
+    try {
+      const o = JSON.parse(m[0]) as { question?: string; reason?: string };
+      if (o.question?.trim()) out.push({ question: o.question, ...(o.reason ? { reason: o.reason } : {}) });
+    } catch {
+      // an incomplete object: by definition not salvageable
+    }
+  }
+  return out;
+}
+
 async function planOnce(
   query: string,
+  terse = false,
 ): Promise<{ subQuestions: SubQuestion[]; inTok: number; outTok: number }> {
   const msg = await anthropic.messages.create({
     model: LLM_MODEL,
-    // Room for the max number of sub-questions AND a reason for each. Too small
-    // a budget truncates the JSON mid-string, which reads as a parse error
-    // rather than as the budget problem it actually is.
-    max_tokens: 1500,
-    system: PLAN_SYSTEM,
+    // Room for the max number of sub-questions AND a reason for each. This was
+    // 1500 and still truncated in production ("Unterminated string at position
+    // 1402"), which surfaces as a JSON parse error and hides the fact that it
+    // is really a budget problem.
+    max_tokens: 2500,
+    system: terse ? `${PLAN_SYSTEM}\n\nKeep each "reason" under 12 words.` : PLAN_SYSTEM,
     messages: [{ role: "user", content: query }],
   });
   const text = msg.content
@@ -60,9 +83,28 @@ async function planOnce(
     .map((b) => b.text)
     .join("");
   const cleaned = text.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
-  const parsed = JSON.parse(cleaned) as {
-    subQuestions: Array<{ question: string; reason?: string } | string>;
-  };
+
+  let parsed: { subQuestions: Array<{ question: string; reason?: string } | string> };
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    // Say which failure this is. "Unterminated string" reads like the model
+    // emitted nonsense; running out of output budget is a different bug with a
+    // different fix, and stop_reason is the only thing that distinguishes them.
+    const salvaged = salvageSubQuestions(cleaned);
+    if (salvaged.length >= DEEP_SUB_QUESTIONS_MIN) {
+      console.warn(
+        `plan_research: response was cut off (stop_reason=${msg.stop_reason}); salvaged ${salvaged.length} complete sub-questions`,
+      );
+      parsed = { subQuestions: salvaged };
+    } else if (msg.stop_reason === "max_tokens") {
+      throw new Error(
+        `plan_research ran out of output budget (stop_reason=max_tokens, ${msg.usage?.output_tokens ?? "?"} tokens); only ${salvaged.length} complete sub-questions recovered`,
+      );
+    } else {
+      throw err;
+    }
+  }
   // Tolerate a bare string array (older prompt shape) without losing the index,
   // which every trace step and source is about to be tagged with.
   const subQuestions = parsed.subQuestions.slice(0, DEEP_SUB_QUESTIONS_MAX).map((sq, idx) => ({
@@ -91,7 +133,11 @@ async function planResearch(query: string) {
     return await planOnce(query);
   } catch (first) {
     console.warn("plan_research retrying after:", String(first));
-    return await planOnce(query);
+    // Retry TERSE. Repeating the identical call was the flaw in the previous
+    // version: a prompt that overran its budget once will overrun it again,
+    // so the retry has to change something. Shorter reasons is the cheapest
+    // thing to give up.
+    return await planOnce(query, true);
   }
 }
 
@@ -159,7 +205,7 @@ export async function runDeepLoop(
   // actually happened: search, then the pages that search found.
   type Fetched =
     | { url: string; title: string; snippet: string; ms: number; ok: true; text: string }
-    | { url: string; title: string; snippet: string; ms: number; ok: false; error: string };
+    | { url: string; title: string; snippet: string; ms: number; ok: false; error: string; declined: boolean };
 
   // Two sub-questions often surface the same page. Claimed synchronously the
   // moment a search returns, so the fetch budget is spent on pages nobody has
@@ -196,7 +242,7 @@ export async function runDeepLoop(
             const text = await fetchPage(r.url);
             return { url: r.url, title: r.title, snippet: r.snippet, ms: Date.now() - t0, ok: true, text };
           } catch (err) {
-            return { url: r.url, title: r.title, snippet: r.snippet, ms: Date.now() - t0, ok: false, error: String(err) };
+            return { url: r.url, title: r.title, snippet: r.snippet, ms: Date.now() - t0, ok: false, error: String(err), declined: err instanceof PageDeclined };
           }
         }),
       );
@@ -216,6 +262,8 @@ export async function runDeepLoop(
   let searchFailed = 0;
   let fetchOk = 0;
   let fetchFailed = 0;
+  // Transport failures only. A 403 is the publisher declining, not our bug.
+  let fetchBrokeDown = 0;
 
   for (const unit of units) {
     step++;
@@ -240,12 +288,22 @@ export async function runDeepLoop(
       if (f.ok) {
         fetchOk++;
         const n = sources.length + 1;
-        sources.push({ n, kind: "web", title: f.title, url: f.url, snippet: f.snippet, subQuestion: unit.sq.i });
+        sources.push({
+          n,
+          kind: "web",
+          title: f.title,
+          url: f.url,
+          // The sub-question, not the original query, is what this page was
+          // fetched to answer, so it is what the passage should be chosen for.
+          snippet: bestPassage(f.text, unit.sq.question) || f.snippet || f.title || f.url,
+          subQuestion: unit.sq.i,
+        });
         grounded.push({ n, subQuestion: unit.sq.i, text: f.text.slice(0, 2500) });
         toolCallLog.push({ name: "fetch_page", ok: true });
         emit("trace", TraceEvent.parse({ step, tool: "fetch_page", input: { url: f.url }, ok: true, ms: f.ms, subQuestion: unit.sq.i }));
       } else {
         fetchFailed++;
+        if (!f.declined) fetchBrokeDown++;
         toolCallLog.push({ name: "fetch_page", ok: false, error: f.error });
         emit("trace", TraceEvent.parse({ step, tool: "fetch_page", input: { url: f.url }, ok: false, ms: f.ms, error: f.error, subQuestion: unit.sq.i }));
       }
@@ -269,9 +327,9 @@ export async function runDeepLoop(
         (inTok / 1e6) * 3.0 + (outTok / 1e6) * 15.0,
       );
     }
-    if (fetchOk === 0 && fetchFailed > 0) {
+    if (fetchOk === 0 && fetchBrokeDown > 0 && fetchBrokeDown === fetchFailed) {
       throw new LoopFailure(
-        `deep search failed: all ${fetchFailed} page fetches threw`,
+        `deep search failed: all ${fetchBrokeDown} page fetches failed at the transport layer`,
         toolCallLog,
         { in: inTok, out: outTok },
         (inTok / 1e6) * 3.0 + (outTok / 1e6) * 15.0,
