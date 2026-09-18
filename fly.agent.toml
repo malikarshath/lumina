@@ -10,7 +10,10 @@
 # Verify:  fly ips list -a lumina-agent-malik   -> must print no public v4/v6
 
 app = "lumina-agent-malik"
-primary_region = "bom"
+# bom (Mumbai) is deprecated for new resources; sin (Singapore) is the
+# nearest region Fly will still provision into, and it keeps the hop to the
+# Atlas cluster short.
+primary_region = "sin"
 
 [build]
   dockerfile = "Dockerfile"
@@ -35,10 +38,11 @@ primary_region = "bom"
 [[vm]]
   size = "shared-cpu-1x"
   memory = "1gb"
+  processes = ["app"]
 
-# No auto_stop: the jobs worker polls for ingest work, and a machine that
-# suspends when no HTTP request is in flight would stall an upload that is
-# mid-parse. Also avoids the cold start that makes the provided UI's one-shot
-# /health check report "gateway unreachable".
-[[vm.restart]]
+# There is no auto_stop here by design: the jobs worker polls for ingest work,
+# so a machine that suspended whenever no HTTP request was in flight would
+# stall an upload mid-parse. Private apps get no requests to wake them either.
+[[restart]]
   policy = "on-failure"
+  processes = ["app"]

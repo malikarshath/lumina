@@ -4,7 +4,10 @@
 # Deploy:  fly deploy -c fly.gateway.toml
 
 app = "lumina-gateway-malik"
-primary_region = "bom"
+# bom (Mumbai) is deprecated for new resources; sin (Singapore) is the
+# nearest region Fly will still provision into, and it keeps the hop to the
+# Atlas cluster short.
+primary_region = "sin"
 
 [build]
   dockerfile = "Dockerfile"
@@ -24,6 +27,10 @@ primary_region = "bom"
 [http_service]
   internal_port = 8787
   force_https = true
+  # Required once [processes] names a process group: Fly refuses a service that
+  # does not say which process it fronts ("Service has no processes set but app
+  # has 1 processes defined").
+  processes = ["app"]
   # An answer streams for seconds and a deep search for a minute or more. A
   # machine that suspends between requests would cold-start on the next one,
   # and the provided UI checks /health exactly once with no retry -- so a cold
@@ -35,3 +42,4 @@ primary_region = "bom"
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
+  processes = ["app"]
