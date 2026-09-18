@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { getDb } from "../db/mongo.js";
@@ -24,10 +25,28 @@ spacesRouter.post("/spaces", async (req, res) => {
   res.status(201).json({ spaceId, name });
 });
 
+// Multer passes an error to the callback (rather than throwing) when the
+// 25MB limit is exceeded; without this handler, Express's default error
+// path returns a bare 500 instead of the contract's 413.
+const uploadSingle = upload.single("file");
+function handleUpload(req: Request, res: Response, next: NextFunction) {
+  uploadSingle(req, res, (err: unknown) => {
+    if (err && (err as { code?: string }).code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ error: "file too large (25MB limit)" });
+    }
+    if (err) return res.status(400).json({ error: String(err) });
+    next();
+  });
+}
+
 // POST /spaces/:id/documents  (multipart 'file') -> 202 { docId, status: "pending" }
-spacesRouter.post("/spaces/:id/documents", upload.single("file"), async (req, res) => {
+spacesRouter.post("/spaces/:id/documents", handleUpload, async (req, res) => {
   const db = await getDb();
   const spaceId = req.params.id;
+
+  const space = await db.collection("spaces").findOne({ spaceId });
+  if (!space) return res.status(404).json({ error: "unknown space" });
+
   const file = req.file;
   if (!file) return res.status(400).json({ error: "file required (multipart field 'file')" });
 
@@ -59,9 +78,12 @@ spacesRouter.post("/spaces/:id/documents", upload.single("file"), async (req, re
   res.status(202).json({ docId, status: "pending" });
 });
 
-// GET /spaces/:id/documents -> 200 { documents: [...] }
+// GET /spaces/:id/documents -> 200 { documents: [...] } | 404 unknown space
 spacesRouter.get("/spaces/:id/documents", async (req, res) => {
   const db = await getDb();
+  const space = await db.collection("spaces").findOne({ spaceId: req.params.id });
+  if (!space) return res.status(404).json({ error: "unknown space" });
+
   const documents = await db
     .collection("documents")
     .find({ spaceId: req.params.id })

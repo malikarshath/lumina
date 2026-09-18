@@ -4,6 +4,7 @@ import express from "express";
 import { pinoHttp } from "pino-http";
 import { HealthResponse } from "@lumina/contract";
 import { askRouter } from "./routes/ask.js";
+import { threadsRouter } from "./routes/threads.js";
 import { spacesRouter } from "./routes/spaces.js";
 import { memoryRouter } from "./routes/memory.js";
 import { artifactsRouter } from "./routes/artifacts.js";
@@ -25,6 +26,7 @@ app.use(
   }),
 );
 app.use(askRouter);
+app.use(threadsRouter);
 app.use(spacesRouter);
 app.use(memoryRouter);
 app.use(artifactsRouter);

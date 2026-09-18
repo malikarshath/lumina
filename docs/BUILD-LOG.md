@@ -12,6 +12,33 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-17 · Session 19: contract status codes — 404, 413, threads routes
+
+**Did (2-hour push against the remaining rubric gaps; terse by design)**
+- `POST /threads` and `GET /threads/:id` never existed at all -- only `POST /threads/:id/ask` did.
+  Built both: create writes a `threads` doc; the ask route now auto-creates one too (upsert), so the
+  existing UI flow (which never calls `POST /threads` first) keeps working. `GET /threads/:id`
+  reconstructs `{messages: [{role, content, sources, artifacts}]}` from the `answers` collection,
+  404s if the thread was never created and never answered anything.
+- `GET /spaces/:id/documents` and `POST /spaces/:id/documents` now 404 on an unknown `spaceId`
+  instead of silently returning an empty list or accepting an upload into nowhere.
+- `POST /spaces/:id/documents` now 413s when multer's 25MB limit is hit -- previously multer passed
+  the error to Express's default handler, which returned a bare 500, not the contract's 413.
+
+**Proved**
+- `npx tsc --noEmit` clean. Started the agent locally and ran real checks: `GET
+  /threads/thr_totally_unknown_xyz` -> 404; `GET`/`POST /spaces/spc_nonexistent/documents` -> 404
+  both; a real 26MB upload against a real space -> 413 `{"error":"file too large (25MB limit)"}`; a
+  real ask in `thr_statuscheck` followed by `GET /threads/thr_statuscheck` -> 200 with the exact
+  `[user, assistant]` message pair, sources included.
+
+**Next**
+- `quality/check.mjs` (performance_sla, 10 pts).
+- `/evals` full trajectories (P1, manual).
+- UI hookup for deck/image artifact buttons.
+
+---
+
 ## 2026-09-17 · Session 18: observability — one request id, run logs, /stats
 
 **Did**

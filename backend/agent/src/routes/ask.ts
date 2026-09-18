@@ -4,6 +4,7 @@ import { AskRequest } from "@lumina/contract";
 import { sseInit, sseSend } from "../sse.js";
 import { runAskLoop } from "../loop/askLoop.js";
 import { writeRunLog } from "../observability/runLog.js";
+import { getDb } from "../db/mongo.js";
 
 export const askRouter = Router();
 
@@ -17,6 +18,16 @@ askRouter.post("/threads/:id/ask", async (req, res) => {
   const userId = String(req.headers["x-user-id"] || "anon");
   // Forwarded by the gateway; falls back to a fresh id if this route is hit directly.
   const requestId = String(req.headers["x-request-id"] || randomUUID());
+
+  // Auto-create the thread on first use, so a client (or a bench script)
+  // never has to call POST /threads before asking -- but GET /threads/:id
+  // now has a real thread doc to find, not just an id nobody ever created.
+  const db = await getDb();
+  await db.collection("threads").updateOne(
+    { threadId: req.params.id },
+    { $setOnInsert: { threadId: req.params.id, userId, createdAt: new Date() } },
+    { upsert: true },
+  );
 
   sseInit(res);
   try {
