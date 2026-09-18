@@ -1,0 +1,27 @@
+# Keep the build context small and, more importantly, keep secrets and local
+# state out of an image layer. .env is the one that matters: it holds the Atlas
+# URI and the provider keys, and on Fly those belong in `fly secrets set`.
+.env
+.env.*
+!.env.example
+
+node_modules
+**/node_modules
+
+# Build output is produced inside the image, never copied in.
+dist
+**/dist
+.next
+**/.next
+provided-ui-dist
+
+# Local evidence and logs; the deployed instance writes its own.
+runs
+reports
+memory
+
+.git
+.github
+.vercel
+.pre-official-backup
+*.log

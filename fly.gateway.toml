@@ -1,0 +1,37 @@
+# The software backend: the only public surface. CORS, the X-User-Id gate,
+# request ids, rate limiting, SSE pass-through. Holds no provider key.
+#
+# Deploy:  fly deploy -c fly.gateway.toml
+
+app = "lumina-gateway-malik"
+primary_region = "bom"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  app = "node backend/gateway/dist/index.js"
+
+[env]
+  NODE_ENV = "production"
+  # Fly's private DNS. The gateway is the only thing that can reach the agent,
+  # which is what makes the deep-search cap unbypassable.
+  AGENT_URL = "http://lumina-agent-malik.internal:8000"
+  # Comma-separated allow-list: our Next.js submission and the provided
+  # acceptance-test UI.
+  CORS_ORIGIN = "https://lumina-web-phi-ashy.vercel.app,https://lumina-provided-ui.vercel.app"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # An answer streams for seconds and a deep search for a minute or more. A
+  # machine that suspends between requests would cold-start on the next one,
+  # and the provided UI checks /health exactly once with no retry -- so a cold
+  # start shows up to the user as "gateway unreachable".
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

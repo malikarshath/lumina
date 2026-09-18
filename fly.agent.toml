@@ -1,0 +1,44 @@
+# The AI backend. Holds the provider keys and enforces DEEP_DAILY_CAP.
+#
+# There is deliberately NO [http_service] and NO [[services]] block here, and
+# the app must have no public IP. That is the whole point: the spend cap lives
+# in this service, and "a cap you can bypass by calling the service directly is
+# not a cap" (TECHNICAL.md). The gateway reaches it over Fly's private IPv6
+# network at http://<app>.internal:8000, which is not routable from outside.
+#
+# Deploy:  fly deploy -c fly.agent.toml
+# Verify:  fly ips list -a lumina-agent-malik   -> must print no public v4/v6
+
+app = "lumina-agent-malik"
+primary_region = "bom"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  app = "node backend/agent/dist/index.js"
+
+[env]
+  AGENT_PORT = "8000"
+  NODE_ENV = "production"
+  LLM_MODEL = "claude-sonnet-5"
+  SEARCH_PROVIDER = "tavily"
+  VECTOR_BACKEND = "atlas-vector-search"
+  MAX_TOOL_CALLS = "8"
+  MAX_WALL_CLOCK_SEC = "90"
+  MAX_TOOL_CALLS_DEEP = "24"
+  MAX_WALL_CLOCK_SEC_DEEP = "240"
+  DEEP_DAILY_CAP = "5"
+  RAG_TOP_K = "8"
+  RAG_MIN_SCORE = "0.08"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+# No auto_stop: the jobs worker polls for ingest work, and a machine that
+# suspends when no HTTP request is in flight would stall an upload that is
+# mid-parse. Also avoids the cold start that makes the provided UI's one-shot
+# /health check report "gateway unreachable".
+[[vm.restart]]
+  policy = "on-failure"
