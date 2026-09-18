@@ -4,11 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
+    "prebuild": "tsc -p ../packages/contract",
     "build": "next build",
     "start": "next start -p 3000",
+    "pretypecheck": "tsc -p ../packages/contract",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@lumina/contract": "*",
     "@tailwindcss/typography": "^0.5.20",
     "daisyui": "^4.12.24",
     "next": "^14.2.5",

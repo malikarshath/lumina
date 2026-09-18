@@ -1,9 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
-import { type AskRequest, TraceEvent, SourcesEvent, TokenEvent, DoneEvent } from "@lumina/contract";
+import {
+  type AskBody,
+  type SubQuestion,
+  PlanEvent,
+  TraceEvent,
+  SourcesEvent,
+  TokenEvent,
+  DoneEvent,
+} from "@lumina/contract";
 import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
-import { tavilySearch, type WebResult } from "../tools/webSearch.js";
-import { getCached, setCached } from "../tools/searchCache.js";
+import { webSearch } from "../tools/webSearch.js";
+import { getCached, setCached, SearchCacheTally } from "../tools/searchCache.js";
+import { loadThreadHistory } from "./threadHistory.js";
 import { fetchPage } from "../tools/fetchPage.js";
 import { getDb, isDbConfigured } from "../db/mongo.js";
 import type { ToolCallLog } from "../observability/runLog.js";
@@ -12,14 +21,19 @@ import type { RunSummary } from "./askLoop.js";
 type Emit = (event: string, data: unknown) => void;
 
 // Deep Search has its own budget, entirely separate from the interactive
-// loop's MAX_TOOL_CALLS/MAX_WALL_CLOCK_MS -- "Quick and Deep must stay
+// loop's MAX_TOOL_CALLS/MAX_WALL_CLOCK_SEC -- "Quick and Deep must stay
 // separate" applies to caps, not just code paths.
-const DEEP_MAX_SUBQUESTIONS = Number(process.env.DEEP_MAX_SUBQUESTIONS) || 4;
-const DEEP_RESULTS_PER_SUBQ = Number(process.env.DEEP_RESULTS_PER_SUBQ) || 2;
+const DEEP_SUB_QUESTIONS_MIN = Number(process.env.DEEP_SUB_QUESTIONS_MIN) || 3;
+const DEEP_SUB_QUESTIONS_MAX = Number(process.env.DEEP_SUB_QUESTIONS_MAX) || 5;
+const DEEP_RESULTS_PER_SUBQ = Number(process.env.DEEP_RESULTS_PER_SUBQ) || 3;
+const DEEP_MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS_DEEP) || 24;
+const DEEP_MAX_WALL_CLOCK_MS = (Number(process.env.MAX_WALL_CLOCK_SEC_DEEP) || 240) * 1000;
 
-const PLAN_SYSTEM = `Break the user's question into 2-4 focused, independently-researchable
-sub-questions that together cover it well. Output ONLY valid JSON (no markdown fences)
-matching exactly: {"subQuestions": string[]}`;
+const PLAN_SYSTEM = `Break the user's question into ${DEEP_SUB_QUESTIONS_MIN}-${DEEP_SUB_QUESTIONS_MAX}
+focused, independently-researchable sub-questions that together cover it well. Each needs a
+one-line reason explaining why answering it is necessary to answer the original question.
+Never fewer than ${DEEP_SUB_QUESTIONS_MIN}. Output ONLY valid JSON (no markdown fences) matching
+exactly: {"subQuestions": [{"question": string, "reason": string}]}`;
 
 const SYNTHESIS_SYSTEM = `You are LUMINA's Deep Search mode. You have been given a set of
 sub-questions and grounded evidence gathered for each of them, with numbered sources.
@@ -28,10 +42,15 @@ evidence from across the sub-questions. Cite every factual claim with [n], where
 the numbered sources you were given. Never invent a citation. If a sub-question's evidence
 was thin, say so plainly for that part rather than filling the gap from your own knowledge.`;
 
-async function planSubQuestions(query: string): Promise<{ subQuestions: string[]; inTok: number; outTok: number }> {
+async function planOnce(
+  query: string,
+): Promise<{ subQuestions: SubQuestion[]; inTok: number; outTok: number }> {
   const msg = await anthropic.messages.create({
     model: LLM_MODEL,
-    max_tokens: 512,
+    // Room for the max number of sub-questions AND a reason for each. Too small
+    // a budget truncates the JSON mid-string, which reads as a parse error
+    // rather than as the budget problem it actually is.
+    max_tokens: 1500,
     system: PLAN_SYSTEM,
     messages: [{ role: "user", content: query }],
   });
@@ -40,23 +59,57 @@ async function planSubQuestions(query: string): Promise<{ subQuestions: string[]
     .map((b) => b.text)
     .join("");
   const cleaned = text.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
-  const parsed = JSON.parse(cleaned) as { subQuestions: string[] };
+  const parsed = JSON.parse(cleaned) as {
+    subQuestions: Array<{ question: string; reason?: string } | string>;
+  };
+  // Tolerate a bare string array (older prompt shape) without losing the index,
+  // which every trace step and source is about to be tagged with.
+  const subQuestions = parsed.subQuestions.slice(0, DEEP_SUB_QUESTIONS_MAX).map((sq, idx) => ({
+    i: idx + 1,
+    question: typeof sq === "string" ? sq : sq.question,
+    ...(typeof sq === "string" ? {} : sq.reason ? { reason: sq.reason } : {}),
+  }));
+  if (subQuestions.length < DEEP_SUB_QUESTIONS_MIN) {
+    throw new Error(
+      `planner returned ${subQuestions.length} sub-questions, need at least ${DEEP_SUB_QUESTIONS_MIN}`,
+    );
+  }
   return {
-    subQuestions: parsed.subQuestions,
+    subQuestions,
     inTok: msg.usage?.input_tokens ?? 0,
     outTok: msg.usage?.output_tokens ?? 0,
   };
 }
 
-type WebSrc = { n: number; kind: "web"; title: string; url: string; snippet: string };
+// One retry, because a plan is a single non-streamed generation and a one-off
+// malformed or too-short response would otherwise sink an entire deep run.
+// The second failure is thrown, not papered over: a deep search with no plan
+// must fail loudly rather than quietly degrade into a slow quick search.
+async function planResearch(query: string) {
+  try {
+    return await planOnce(query);
+  } catch (first) {
+    console.warn("plan_research retrying after:", String(first));
+    return await planOnce(query);
+  }
+}
 
-// Planner -> parallel per-sub-question search -> parallel fetch across every
-// sub-question's results at once -> merge -> one synthesis call over all of
-// it. Deterministic retrieval per sub-question (not another agentic tool
-// loop per sub-question) -- fast, cost-bounded, and still genuinely broader
-// evidence-gathering than the single-question interactive loop.
+type WebSrc = {
+  n: number;
+  kind: "web";
+  title: string;
+  url: string;
+  snippet: string;
+  subQuestion: number;
+};
+
+// plan_research -> parallel per-sub-question search -> parallel fetch across every
+// sub-question's results at once -> merge into one deduped citation numbering ->
+// one synthesis call over all of it. Deterministic retrieval per sub-question
+// (not another agentic tool loop per sub-question) -- fast, cost-bounded, and
+// still genuinely broader evidence-gathering than the quick loop.
 export async function runDeepLoop(
-  req: AskRequest,
+  req: AskBody,
   emit: Emit,
   userId: string,
   threadId: string,
@@ -65,110 +118,173 @@ export async function runDeepLoop(
   let step = 0;
   let inTok = 0;
   let outTok = 0;
-  let searchCalls = 0;
-  let searchCached = false;
+  const searchTally = new SearchCacheTally();
+  let terminated: "done" | "cap" = "done";
   const toolCallLog: ToolCallLog[] = [];
 
-  // Step 1: plan.
+  const overBudget = () =>
+    toolCallLog.length >= DEEP_MAX_TOOL_CALLS || Date.now() - start > DEEP_MAX_WALL_CLOCK_MS;
+
+  // Step 1: plan. This runs before any retrieval, and the plan is streamed as
+  // its own `plan` event before the first trace step -- a plan emitted after
+  // the fetches would be a rationalisation, not a plan.
   const planT0 = Date.now();
-  const plan = await planSubQuestions(req.query);
+  const plan = await planResearch(req.query);
   inTok += plan.inTok;
   outTok += plan.outTok;
+  const subQuestions = plan.subQuestions;
+
+  emit("plan", PlanEvent.parse({ subQuestions }));
+
   step++;
-  toolCallLog.push({ name: "plan_subquestions", ok: true });
+  toolCallLog.push({ name: "plan_research", ok: true });
   emit(
     "trace",
     TraceEvent.parse({
-      event: "trace",
       step,
-      tool: "plan_subquestions",
+      tool: "plan_research",
       input: { query: req.query },
       ok: true,
       ms: Date.now() - planT0,
+      reason: `decomposed into ${subQuestions.length} sub-questions`,
     }),
   );
 
-  const subQuestions = plan.subQuestions.slice(0, DEEP_MAX_SUBQUESTIONS);
-  const terminated: "done" | "cap" = plan.subQuestions.length > DEEP_MAX_SUBQUESTIONS ? "cap" : "done";
+  // Step 2: research each sub-question as a UNIT -- its own search, then the
+  // fetches that search turned up. The units run concurrently (that is the
+  // breadth-without-time win), but a unit does not wait for anyone else's
+  // search to finish before reading its own pages, which is both faster than
+  // two global phases and produces a trace that reads in the order the work
+  // actually happened: search, then the pages that search found.
+  type Fetched =
+    | { url: string; title: string; snippet: string; ms: number; ok: true; text: string }
+    | { url: string; title: string; snippet: string; ms: number; ok: false; error: string };
 
-  // Step 2: search every sub-question concurrently.
-  const searchOutcomes = await Promise.all(
-    subQuestions.map(async (q) => {
-      const t0 = Date.now();
+  // Two sub-questions often surface the same page. Claimed synchronously the
+  // moment a search returns, so the fetch budget is spent on pages nobody has
+  // read yet and one page never takes two citation numbers.
+  const claimedUrls = new Set<string>();
+
+  const units = await Promise.all(
+    subQuestions.map(async (sq) => {
+      const searchT0 = Date.now();
+      let search:
+        | { ok: true; ms: number; cached: boolean; found: Awaited<ReturnType<typeof webSearch>> }
+        | { ok: false; ms: number; error: string };
       try {
-        const cachedHit = await getCached(q);
-        const found = cachedHit ?? (await tavilySearch(q));
-        if (!cachedHit) await setCached(q, found);
-        return { q, ms: Date.now() - t0, ok: true as const, cached: Boolean(cachedHit), found };
+        const cachedHit = await getCached(sq.question);
+        const found = cachedHit ?? (await webSearch(sq.question));
+        if (!cachedHit) await setCached(sq.question, found);
+        search = { ok: true, ms: Date.now() - searchT0, cached: Boolean(cachedHit), found };
       } catch (err) {
-        return { q, ms: Date.now() - t0, ok: false as const, error: String(err) };
+        return { sq, search: { ok: false as const, ms: Date.now() - searchT0, error: String(err) }, fetches: [] as Fetched[] };
       }
+
+      const targets = search.found
+        .filter((r) => {
+          if (claimedUrls.has(r.url)) return false;
+          claimedUrls.add(r.url);
+          return true;
+        })
+        .slice(0, DEEP_RESULTS_PER_SUBQ);
+
+      const fetches: Fetched[] = await Promise.all(
+        targets.map(async (r): Promise<Fetched> => {
+          const t0 = Date.now();
+          try {
+            const text = await fetchPage(r.url);
+            return { url: r.url, title: r.title, snippet: r.snippet, ms: Date.now() - t0, ok: true, text };
+          } catch (err) {
+            return { url: r.url, title: r.title, snippet: r.snippet, ms: Date.now() - t0, ok: false, error: String(err) };
+          }
+        }),
+      );
+      return { sq, search, fetches };
     }),
   );
 
-  const toFetch: Array<{ subQuestion: string; title: string; url: string; snippet: string }> = [];
-  for (const o of searchOutcomes) {
-    step++;
-    if (o.ok) {
-      searchCached = searchCached || o.cached;
-      if (!o.cached) searchCalls++;
-      toolCallLog.push({ name: "web_search", ok: true });
-      emit("trace", TraceEvent.parse({ event: "trace", step, tool: "web_search", input: { query: o.q }, ok: true, ms: o.ms }));
-      for (const r of o.found.slice(0, DEEP_RESULTS_PER_SUBQ)) {
-        toFetch.push({ subQuestion: o.q, title: r.title, url: r.url, snippet: r.snippet });
-      }
-    } else {
-      toolCallLog.push({ name: "web_search", ok: false, error: o.error });
-      emit("trace", TraceEvent.parse({ event: "trace", step, tool: "web_search", input: { query: o.q }, ok: false, ms: o.ms, error: o.error }));
-    }
-  }
-
-  // Step 3: fetch every sub-question's top results concurrently, all at once
-  // (not nested per sub-question) -- this is the actual breadth-without-time
-  // win over running the sub-questions one after another.
-  const fetchOutcomes = await Promise.all(
-    toFetch.map(async (item) => {
-      const t0 = Date.now();
-      try {
-        const text = await fetchPage(item.url);
-        return { ...item, ms: Date.now() - t0, ok: true as const, text };
-      } catch (err) {
-        return { ...item, ms: Date.now() - t0, ok: false as const, error: String(err) };
-      }
-    }),
-  );
-
+  // Step 3: merge into ONE contiguous citation numbering across every
+  // sub-question, each source tagged with the sub-question that found it.
   const sources: WebSrc[] = [];
-  const grounded: Array<{ n: number; subQuestion: string; text: string }> = [];
-  for (const o of fetchOutcomes) {
+  const grounded: Array<{ n: number; subQuestion: number; text: string }> = [];
+
+  // Retrieval that returned nothing and retrieval that threw are different
+  // events and must not produce the same answer. Counted so the empty case
+  // below can tell them apart.
+  let searchOk = 0;
+  let searchFailed = 0;
+  let fetchOk = 0;
+  let fetchFailed = 0;
+
+  for (const unit of units) {
     step++;
-    if (o.ok) {
-      sources.push({ n: sources.length + 1, kind: "web", title: o.title, url: o.url, snippet: o.snippet });
-      grounded.push({ n: sources.length, subQuestion: o.subQuestion, text: o.text.slice(0, 2500) });
-      toolCallLog.push({ name: "fetch_page", ok: true });
-      emit("trace", TraceEvent.parse({ event: "trace", step, tool: "fetch_page", input: { url: o.url, subQuestion: o.subQuestion }, ok: true, ms: o.ms }));
+    if (unit.search.ok) {
+      searchOk++;
+      searchTally.record(unit.search.cached);
+      toolCallLog.push({ name: "web_search", ok: true });
+      emit("trace", TraceEvent.parse({ step, tool: "web_search", input: { query: unit.sq.question }, ok: true, ms: unit.search.ms, subQuestion: unit.sq.i }));
     } else {
-      toolCallLog.push({ name: "fetch_page", ok: false, error: o.error });
-      emit("trace", TraceEvent.parse({ event: "trace", step, tool: "fetch_page", input: { url: o.url, subQuestion: o.subQuestion }, ok: false, ms: o.ms, error: o.error }));
+      searchFailed++;
+      toolCallLog.push({ name: "web_search", ok: false, error: unit.search.error });
+      emit("trace", TraceEvent.parse({ step, tool: "web_search", input: { query: unit.sq.question }, ok: false, ms: unit.search.ms, error: unit.search.error, subQuestion: unit.sq.i }));
+      continue;
+    }
+
+    for (const f of unit.fetches) {
+      if (toolCallLog.length >= DEEP_MAX_TOOL_CALLS) {
+        terminated = "cap";
+        break;
+      }
+      step++;
+      if (f.ok) {
+        fetchOk++;
+        const n = sources.length + 1;
+        sources.push({ n, kind: "web", title: f.title, url: f.url, snippet: f.snippet, subQuestion: unit.sq.i });
+        grounded.push({ n, subQuestion: unit.sq.i, text: f.text.slice(0, 2500) });
+        toolCallLog.push({ name: "fetch_page", ok: true });
+        emit("trace", TraceEvent.parse({ step, tool: "fetch_page", input: { url: f.url }, ok: true, ms: f.ms, subQuestion: unit.sq.i }));
+      } else {
+        fetchFailed++;
+        toolCallLog.push({ name: "fetch_page", ok: false, error: f.error });
+        emit("trace", TraceEvent.parse({ step, tool: "fetch_page", input: { url: f.url }, ok: false, ms: f.ms, error: f.error, subQuestion: unit.sq.i }));
+      }
     }
   }
 
-  emit("sources", SourcesEvent.parse({ event: "sources", sources }));
+  if (overBudget()) terminated = "cap";
+
+  // Fail loud. An empty answer is only honest when retrieval genuinely found
+  // nothing; when every search threw (bad key, provider down) or every page
+  // fetch threw, telling the user "I couldn't find evidence" reports a search
+  // result for what was actually an outage -- and returns 200 for it. Throwing
+  // here reaches the ask route, which emits the SSE error with status 502 and
+  // records terminated: "error".
+  if (sources.length === 0) {
+    if (searchOk === 0 && searchFailed > 0) {
+      throw new Error(`deep search failed: all ${searchFailed} sub-question searches threw`);
+    }
+    if (fetchOk === 0 && fetchFailed > 0) {
+      throw new Error(`deep search failed: all ${fetchFailed} page fetches threw`);
+    }
+  }
+
+  emit("sources", SourcesEvent.parse(sources));
 
   let ttftMs = 0;
   let answerText = "";
 
   if (sources.length === 0) {
-    // Empty retrieval -> say so, cite nothing (contract rule, same as the quick loop).
+    // Genuinely empty retrieval (searches ran and returned nothing to read):
+    // say so, cite nothing. The failure cases were thrown above.
     ttftMs = Date.now() - start;
     answerText = "I wasn't able to retrieve any grounded evidence for this deep search across the sub-questions I planned. Please try rephrasing or narrowing the question.";
-    emit("token", TokenEvent.parse({ event: "token", text: answerText }));
+    emit("token", TokenEvent.parse({ text: answerText }));
   } else {
     const evidenceBySubQ = subQuestions
-      .map((q, i) => {
-        const parts = grounded.filter((g) => g.subQuestion === q);
-        if (parts.length === 0) return `${i + 1}. ${q}\n(no grounded evidence found for this sub-question)`;
-        return `${i + 1}. ${q}\n${parts.map((p) => `[${p.n}] ${p.text}`).join("\n\n")}`;
+      .map((sq) => {
+        const parts = grounded.filter((g) => g.subQuestion === sq.i);
+        if (parts.length === 0) return `${sq.i}. ${sq.question}\n(no grounded evidence found for this sub-question)`;
+        return `${sq.i}. ${sq.question}\n${parts.map((p) => `[${p.n}] ${p.text}`).join("\n\n")}`;
       })
       .join("\n\n");
 
@@ -178,20 +294,31 @@ export async function runDeepLoop(
       model: LLM_MODEL,
       max_tokens: 2048,
       system: SYNTHESIS_SYSTEM,
-      messages: [{ role: "user", content: userContent }],
+      messages: [...(await loadThreadHistory(threadId, userId)), { role: "user", content: userContent }],
       ...({ output_config: { effort: "low" } } as Record<string, unknown>),
     });
     stream.on("text", (delta) => {
       if (!ttftMs) ttftMs = Date.now() - start;
       answerText += delta;
-      emit("token", TokenEvent.parse({ event: "token", text: delta }));
+      emit("token", TokenEvent.parse({ text: delta }));
     });
     const msg = await stream.finalMessage();
     inTok += msg.usage?.input_tokens ?? 0;
     outTok += msg.usage?.output_tokens ?? 0;
   }
 
-  const costUsd = (inTok / 1e6) * 3.0 + (outTok / 1e6) * 15.0 + searchCalls * 0.008;
+  // Same honesty rule as the quick loop: a deep run that ran out of budget
+  // part-way through its sub-questions must say so in the answer text, not
+  // only in the done event's terminated field.
+  if (terminated === "cap") {
+    const note =
+      "\n\n_This deep search is partial: it hit its tool-call or time budget before finishing every sub-question it planned._";
+    answerText += note;
+    if (!ttftMs) ttftMs = Date.now() - start;
+    emit("token", TokenEvent.parse({ text: note }));
+  }
+
+  const costUsd = (inTok / 1e6) * 3.0 + (outTok / 1e6) * 15.0 + searchTally.liveCalls * 0.008;
   const answerId = "ans_" + randomUUID().slice(0, 8);
 
   if (isDbConfigured()) {
@@ -204,7 +331,8 @@ export async function runDeepLoop(
         query: req.query,
         text: answerText,
         sources,
-        mode: "deep",
+        mode: req.mode,
+        depth: "deep",
         subQuestions,
         createdAt: new Date(),
       });
@@ -216,15 +344,16 @@ export async function runDeepLoop(
   emit(
     "done",
     DoneEvent.parse({
-      event: "done",
       answerId,
       latencyMs: Date.now() - start,
       ttftMs,
       model: LLM_MODEL,
       tokens: { in: inTok, out: outTok },
       costUsd: Number(costUsd.toFixed(6)),
-      searchCached,
+      searchCached: searchTally.allCached,
       terminated,
+      depth: "deep",
+      subQuestions: subQuestions.length,
     }),
   );
 
@@ -236,6 +365,8 @@ export async function runDeepLoop(
     terminated,
     toolCalls: toolCallLog,
     ttftMs,
-    searchCached,
+    latencyMs: Date.now() - start,
+    searchCached: searchTally.allCached,
+    depth: "deep",
   };
 }

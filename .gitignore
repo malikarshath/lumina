@@ -28,3 +28,9 @@ reports/*
 .vscode/
 .idea/
 *.log
+web/public/report.json
+
+# Pre-migration copies of the hand-rolled provided folders, kept locally for
+# comparison only. Never committed: a duplicate of packages/contract in the
+# repo would look like the provided contract was edited.
+.pre-official-backup/

@@ -20,6 +20,10 @@ export type RunLog = {
   ttftMs?: number;
   searchCached?: boolean;
   answerId?: string;
+  // Which gear ran. The quality kit applies one budget envelope to every run
+  // log, so this is what tells an expensive-but-legitimate deep run apart from
+  // a quick run that has run away with the budget.
+  depth?: "quick" | "deep";
 };
 
 // PRD 13's run-log shape, one file per request: runs/<requestId>.json --
@@ -32,8 +36,8 @@ export type RunLog = {
 export async function writeRunLog(log: RunLog): Promise<void> {
   try {
     mkdirSync(RUNS_DIR, { recursive: true });
-    const { tokens, wallClockSec, costUsd, terminated, toolCalls } = log;
-    const body = { tokens, wallClockSec, costUsd, terminated, toolCalls };
+    const { tokens, wallClockSec, costUsd, terminated, toolCalls, depth } = log;
+    const body = { tokens, wallClockSec, costUsd, terminated, toolCalls, ...(depth ? { depth } : {}) };
     writeFileSync(resolve(RUNS_DIR, `${log.requestId}.json`), JSON.stringify(body, null, 2));
   } catch (err) {
     console.error("failed to write local run log:", String(err));

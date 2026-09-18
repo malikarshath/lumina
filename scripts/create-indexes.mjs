@@ -1,77 +1,105 @@
-// Creates LUMINA's MongoDB collections + indexes on Atlas, including the
-// Atlas Vector Search index (for embeddings) and a text search index (BM25,
-// for hybrid retrieval). Idempotent-ish: "already exists" errors are ignored.
-//
-// Run:  node --env-file=.env scripts/create-indexes.mjs
-import { MongoClient } from "mongodb";
+#!/usr/bin/env node
+/**
+ * Create every index LUMINA needs, from scripts/indexes.json. PROVIDED — safe to re-run.
+ *
+ * MONGO-ONLY CONVENIENCE, not a gate. It is a helper for the taught MERN path; nothing in
+ * the grader calls it. If you built on another store, create its indexes however that store
+ * expects and make /health name it.
+ *
+ *   node scripts/create-indexes.mjs            # apply
+ *   node scripts/create-indexes.mjs --status   # just show what exists
+ *
+ * A plain mongod (docker compose up mongo) has no Atlas Search: the three search indexes
+ * will fail and this script says so and keeps going, because the regular and TTL indexes
+ * still apply. Run with VECTOR_BACKEND=mongo-cosine-scan in that case, and make /health
+ * say which backend is live so a grader knows what they are looking at.
+ */
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { config } from 'dotenv';
+import { MongoClient } from 'mongodb';
 
-const URI = process.env.MONGODB_URI;
-const DB = process.env.MONGODB_DB || "lumina";
-if (!URI) {
-  console.error("MONGODB_URI is not set. Run with: node --env-file=.env scripts/create-indexes.mjs");
-  process.exit(1);
+const HERE = dirname(fileURLToPath(import.meta.url));
+config({ path: resolve(HERE, '..', '.env') });
+
+const spec = JSON.parse(readFileSync(join(HERE, 'indexes.json'), 'utf8'));
+const uri = process.env.MONGODB_URI;
+const dbName = process.env.MONGODB_DB ?? 'lumina';
+const statusOnly = process.argv.includes('--status');
+
+if (!uri) {
+  console.error('MONGODB_URI is not set. Copy .env.example to .env and fill it in.');
+  process.exit(2);
 }
 
-const EMBED_DIMS = 1536; // OpenAI text-embedding-3-small
-
-const client = new MongoClient(URI);
-
-const ignoreExists = (label) => (err) => {
-  if (/already exists|IndexAlreadyExists|Duplicate/i.test(String(err?.message))) {
-    console.log(`  = ${label} (already exists)`);
-  } else {
-    throw err;
-  }
-};
+const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
+let warnings = 0;
 
 try {
   await client.connect();
-  await client.db(DB).command({ ping: 1 });
-  console.log(`connected to Atlas, db="${DB}"\n`);
-  const db = client.db(DB);
+  const db = client.db(dbName);
+  console.log(`lumina indexes → ${dbName}\n`);
 
-  // Ensure collections exist (createCollection is a no-op if present).
-  for (const c of ["threads", "memories", "documents", "chunks", "jobs", "cache"]) {
-    await db.createCollection(c).then(() => console.log(`+ collection ${c}`)).catch(() => {});
+  if (statusOnly) {
+    for (const name of Object.keys(spec.collections)) {
+      const existing = await db.collection(name).indexes().catch(() => []);
+      console.log(`${name}: ${existing.map((i) => i.name).join(', ') || '(none)'}`);
+    }
+    for (const si of spec.searchIndexes) {
+      const list = await db.collection(si.collection).listSearchIndexes().toArray().catch(() => null);
+      const found = list?.find((i) => i.name === si.name);
+      console.log(
+        `${si.collection}/${si.name}: ${found ? `${found.status ?? 'present'}${found.queryable ? ' (queryable)' : ''}` : 'MISSING'}`
+      );
+    }
+    process.exit(0);
   }
 
-  console.log("\nstandard indexes:");
-  await db.collection("threads").createIndex({ userId: 1, createdAt: -1 }).then((n) => console.log(`  + threads.${n}`)).catch(ignoreExists("threads userId"));
-  await db.collection("memories").createIndex({ userId: 1 }).then((n) => console.log(`  + memories.${n}`)).catch(ignoreExists("memories userId"));
-  await db.collection("documents").createIndex({ spaceId: 1, status: 1 }).then((n) => console.log(`  + documents.${n}`)).catch(ignoreExists("documents spaceId"));
-  await db.collection("chunks").createIndex({ docId: 1 }).then((n) => console.log(`  + chunks.${n}`)).catch(ignoreExists("chunks docId"));
-  await db.collection("jobs").createIndex({ status: 1, createdAt: 1 }).then((n) => console.log(`  + jobs.${n}`)).catch(ignoreExists("jobs status"));
-  // TTL index: cache entries expire automatically (search cache).
-  await db.collection("cache").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }).then((n) => console.log(`  + cache.${n} (TTL)`)).catch(ignoreExists("cache TTL"));
+  // ---- regular + TTL indexes -------------------------------------------------
+  for (const [name, cfg] of Object.entries(spec.collections)) {
+    // createCollection first so an index on an unseen collection does not race the app.
+    await db.createCollection(name).catch(() => {});
+    for (const idx of cfg.indexes ?? []) {
+      const options = { ...(idx.options ?? {}) };
+      const label = options.name ?? Object.entries(idx.keys).map(([k, v]) => `${k}_${v}`).join('_');
+      try {
+        await db.collection(name).createIndex(idx.keys, options);
+        console.log(`  ✓ ${name}.${label}${options.expireAfterSeconds !== undefined ? ' (TTL)' : ''}`);
+      } catch (err) {
+        warnings++;
+        console.log(`  ! ${name}.${label} — ${err.message}`);
+      }
+    }
+  }
 
-  console.log("\nAtlas Search indexes (build asynchronously; may take ~1-2 min to become queryable):");
-  // Vector index for chunk embeddings.
-  await db.collection("chunks").createSearchIndex({
-    name: "vector_index",
-    type: "vectorSearch",
-    definition: {
-      fields: [
-        { type: "vector", path: "embedding", numDimensions: EMBED_DIMS, similarity: "cosine" },
-        { type: "filter", path: "docId" },
-      ],
-    },
-  }).then((n) => console.log(`  + chunks.${n} (vectorSearch)`)).catch(ignoreExists("chunks vector_index"));
+  // ---- Atlas Search / Vector Search indexes ---------------------------------
+  console.log('');
+  for (const si of spec.searchIndexes) {
+    const coll = db.collection(si.collection);
+    await db.createCollection(si.collection).catch(() => {});
+    try {
+      const existing = await coll.listSearchIndexes().toArray();
+      if (existing.some((i) => i.name === si.name)) {
+        await coll.updateSearchIndex(si.name, si.definition);
+        console.log(`  ✓ ${si.collection}/${si.name} (${si.type}) updated`);
+      } else {
+        await coll.createSearchIndex({ name: si.name, type: si.type, definition: si.definition });
+        console.log(`  ✓ ${si.collection}/${si.name} (${si.type}) created — building, usually < 1 min`);
+      }
+    } catch (err) {
+      warnings++;
+      console.log(`  ! ${si.collection}/${si.name} — ${err.message}`);
+      console.log('    (no Atlas Search on this cluster? run with VECTOR_BACKEND=mongo-cosine-scan)');
+    }
+  }
 
-  // NOTE: memory recall ranks with in-JS cosine similarity over stored embeddings
-  // (per-user sets are small), so it needs no Atlas Search index — the M0 tier
-  // caps the number of search indexes, and we spend them on chunks (vector + BM25).
-
-  // Text (BM25) index for hybrid search.
-  await db.collection("chunks").createSearchIndex({
-    name: "text_index",
-    type: "search",
-    definition: { mappings: { dynamic: false, fields: { text: { type: "string" } } } },
-  }).then((n) => console.log(`  + chunks.${n} (search/BM25)`)).catch(ignoreExists("chunks text_index"));
-
-  console.log("\ndone.");
-} catch (err) {
-  console.error("\nFAILED:", err.message);
-  process.exitCode = 1;
+  console.log(
+    warnings
+      ? `\ndone with ${warnings} warning(s). A search index reports "building" for a while; ` +
+          'it is not queryable until listSearchIndexes says queryable: true.'
+      : '\ndone. Search indexes build asynchronously — check with --status before you trust a recall number.'
+  );
 } finally {
   await client.close();
 }

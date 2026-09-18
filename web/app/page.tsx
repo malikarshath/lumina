@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { askStream, type Source, type TraceStep } from "@/lib/askStream";
+import { askStream, type Source, type SubQuestion, type TraceStep } from "@/lib/askStream";
 import {
   GATEWAY_URL,
   USER_ID,
@@ -17,7 +17,10 @@ import {
 import { TracePanel } from "@/components/TracePanel";
 import { SourcesPanel } from "@/components/SourcesPanel";
 
-type Mode = "auto" | "web" | "docs" | "deep";
+// Two independent axes: where to look, and how hard. Depth multiplies the cost
+// of any mode, so it is its own opt-in control rather than a fourth mode.
+type Mode = "auto" | "web" | "docs";
+type Depth = "quick" | "deep";
 type ArtifactUi = { kind: "deck" | "image"; status: "pending" | "ready" | "failed"; url?: string; error?: string };
 
 // One fixed thread for this single-thread UI. Must match the contract's
@@ -29,9 +32,11 @@ const THREAD_ID = "thr_web01";
 export default function Home() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<Mode>("auto");
+  const [depth, setDepth] = useState<Depth>("quick");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
   const [trace, setTrace] = useState<TraceStep[]>([]);
+  const [plan, setPlan] = useState<SubQuestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,12 +86,14 @@ export default function Home() {
     setAnswer("");
     setSources([]);
     setTrace([]);
+    setPlan([]);
     setError(null);
     setAnswerId(null);
     setArtifact(null);
 
-    const sid = mode === "web" || mode === "deep" ? undefined : spaceId ?? undefined;
-    await askStream(GATEWAY_URL, THREAD_ID, query, mode, USER_ID, {
+    const sid = mode === "web" ? undefined : spaceId ?? undefined;
+    await askStream(GATEWAY_URL, THREAD_ID, query, mode, depth, USER_ID, {
+      onPlan: (d) => setPlan(d.subQuestions),
       onTrace: (d) => setTrace((t) => [...t, d]),
       onSources: (s) => setSources(s),
       onToken: (text) => setAnswer((a) => a + text),
@@ -127,7 +134,7 @@ export default function Home() {
     setArtifact({ kind, status: "failed", error: "timed out waiting for the artifact" });
   }
 
-  const modes: Mode[] = ["auto", "web", "docs", "deep"];
+  const modes: Mode[] = ["auto", "web", "docs"];
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
@@ -139,24 +146,38 @@ export default function Home() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         {/* ---- main chat column ---- */}
         <div>
-          {/* mode toggle */}
-          <div className="mb-3 flex gap-1 text-sm">
-            {modes.map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                className={
-                  "rounded-md px-3 py-1 capitalize " +
-                  (mode === m ? "bg-white text-black" : "bg-neutral-900 text-neutral-400 hover:text-neutral-200")
-                }
-              >
-                {m}
-              </button>
-            ))}
+          {/* where to look (mode) · how hard to look (depth) */}
+          <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
+            <div className="flex gap-1">
+              {modes.map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={
+                    "rounded-md px-3 py-1 capitalize " +
+                    (mode === m ? "bg-white text-black" : "bg-neutral-900 text-neutral-400 hover:text-neutral-200")
+                  }
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            <span className="text-neutral-700">|</span>
+            <button
+              onClick={() => setDepth(depth === "deep" ? "quick" : "deep")}
+              aria-pressed={depth === "deep"}
+              className={
+                "rounded-md px-3 py-1 " +
+                (depth === "deep" ? "bg-amber-300 text-black" : "bg-neutral-900 text-neutral-400 hover:text-neutral-200")
+              }
+            >
+              {depth === "deep" ? "Deep search on" : "Deep search"}
+            </button>
           </div>
-          {mode === "deep" && (
+          {depth === "deep" && (
             <p className="mb-3 text-xs text-neutral-500">
-              Plans sub-questions, researches each in parallel, and merges citations — slower, broader.
+              Plans sub-questions, researches each in parallel, and merges citations — slower, broader,
+              and capped per day because it costs several times a quick search.
             </p>
           )}
 
@@ -173,7 +194,7 @@ export default function Home() {
           </form>
 
           {/* documents panel (used when mode is docs or auto) */}
-          {mode !== "web" && mode !== "deep" && (
+          {mode !== "web" && (
             <div className="mb-6 rounded-lg border border-neutral-800 p-4">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs uppercase tracking-widest text-neutral-500">Your documents</span>
@@ -201,6 +222,27 @@ export default function Home() {
 
           {error && (
             <div className="mb-4 rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">{error}</div>
+          )}
+
+          {/* The plan arrives before any retrieval, so it renders above the answer:
+              the decomposition is the feature, and it has to be readable to be judged. */}
+          {plan.length > 0 && (
+            <div className="mb-4 rounded-lg border border-amber-900/60 bg-amber-950/20 p-4">
+              <span className="text-xs uppercase tracking-widest text-amber-500/80">
+                Research plan · {plan.length} sub-questions
+              </span>
+              <ol className="mt-2 space-y-2 text-sm">
+                {plan.map((sq) => (
+                  <li key={sq.i} className="flex gap-2">
+                    <span className="shrink-0 font-mono text-amber-500/80">{sq.i}.</span>
+                    <span>
+                      {sq.question}
+                      {sq.reason && <span className="block text-xs text-neutral-500">{sq.reason}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
           )}
 
           {answer && (

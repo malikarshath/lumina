@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { GATEWAY_URL } from "@/lib/api";
 
 type Check = { metric: string; measured: number; target: number; pass: boolean; dir: string };
 type Sample = {
@@ -92,8 +93,12 @@ export default function Evals() {
   const [missing, setMissing] = useState(false);
 
   useEffect(() => {
-    fetch("/report.json")
+    // Prefer the gateway's contract path so the page shows what the grader
+    // fetches; fall back to the copy bundled in web/public for local dev with
+    // no gateway running.
+    fetch(`${GATEWAY_URL}/evals/report.json`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .catch(() => fetch("/report.json").then((r) => (r.ok ? r.json() : Promise.reject())))
       .then(setReport)
       .catch(() => setMissing(true));
   }, []);

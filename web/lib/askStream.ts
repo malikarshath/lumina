@@ -1,22 +1,32 @@
 // Browser-side reader for the /ask SSE stream. EventSource only does GET,
 // and our /ask is a POST, so we read the fetch body stream and parse frames.
 
-export type Source = {
-  n: number;
-  kind: "web" | "doc";
-  title: string;
-  url?: string;
-  snippet?: string;
-};
+// Types come from the provided contract, not from hand-written copies here.
+// That is the whole point of packages/contract: if the backend's payloads and
+// the UI's expectations drift apart, this file stops compiling instead of
+// rendering nothing at runtime.
+import type {
+  DoneEvent,
+  PlanEvent,
+  Source,
+  StreamErrorEvent,
+  SubQuestion,
+  TraceEvent,
+} from "@lumina/contract";
 
-export type TraceStep = { tool: string; input: unknown; ok: boolean; ms: number; error?: string };
+export type { Source, SubQuestion };
+/** One row in the trace panel. */
+export type TraceStep = TraceEvent;
 
 export type AskHandlers = {
-  onTrace?: (d: TraceStep) => void;
+  // Deep search streams the plan before any retrieval, so the reader sees what
+  // it decided to go and find out before the evidence starts arriving.
+  onPlan?: (d: PlanEvent) => void;
+  onTrace?: (d: TraceEvent) => void;
   onSources?: (sources: Source[]) => void;
   onToken?: (text: string) => void;
-  onDone?: (d: { answerId: string; latencyMs: number; ttftMs: number; terminated: string }) => void;
-  onError?: (d: { status?: number; error: string }) => void;
+  onDone?: (d: DoneEvent) => void;
+  onError?: (d: StreamErrorEvent) => void;
 };
 
 export async function askStream(
@@ -24,11 +34,12 @@ export async function askStream(
   threadId: string,
   query: string,
   mode: string,
+  depth: string,
   userId: string,
   h: AskHandlers,
   spaceId?: string,
 ) {
-  const body: Record<string, unknown> = { query, mode };
+  const body: Record<string, unknown> = { query, mode, depth };
   if (spaceId) body.spaceId = spaceId;
   const res = await fetch(`${gatewayUrl}/threads/${threadId}/ask`, {
     method: "POST",
@@ -37,7 +48,19 @@ export async function askStream(
   });
 
   if (!res.ok || !res.body) {
-    h.onError?.({ status: res.status, error: await res.text() });
+    // The deep daily cap answers 429 {error, resetsAt} before the stream opens,
+    // so surface both rather than dumping raw JSON at the user.
+    const text = await res.text();
+    let message = text;
+    try {
+      const body = JSON.parse(text) as { error?: string; resetsAt?: string };
+      if (body.error) {
+        message = body.resetsAt ? `${body.error} — resets at ${body.resetsAt}` : body.error;
+      }
+    } catch {
+      // not JSON; the raw text is the most useful thing we have
+    }
+    h.onError?.({ status: res.status, error: message });
     return;
   }
 
@@ -63,8 +86,11 @@ export async function askStream(
       }
       if (!data) continue;
       const parsed = JSON.parse(data);
-      if (event === "trace") h.onTrace?.(parsed);
-      else if (event === "sources") h.onSources?.(parsed.sources);
+      if (event === "plan") h.onPlan?.(parsed);
+      else if (event === "trace") h.onTrace?.(parsed);
+      // The sources frame's payload IS the array (contract: SourcesEvent =
+      // z.array(Source)), not an object wrapping one.
+      else if (event === "sources") h.onSources?.(parsed);
       else if (event === "token") h.onToken?.(parsed.text);
       else if (event === "done") h.onDone?.(parsed);
       else if (event === "error") h.onError?.(parsed);

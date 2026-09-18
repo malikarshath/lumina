@@ -18,7 +18,7 @@
     "start:prod": "node scripts/start-prod.mjs",
     "worker": "echo 'TODO: run the jobs worker as a separate process (backend/agent)'",
     "lint": "echo 'TODO: eslint across workspaces'",
-    "typecheck": "echo 'TODO: tsc --noEmit across workspaces'",
+    "typecheck": "tsc --noEmit -p packages/contract && tsc --noEmit -p backend/agent && tsc --noEmit -p backend/gateway && tsc --noEmit -p web",
     "bench": "node benchmark/bench.mjs",
     "check": "node quality/check.mjs .",
     "export:runs": "node scripts/export-runs.mjs"

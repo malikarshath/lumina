@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { CreateThreadResponse, ThreadMessagesResponse } from "@lumina/contract";
+import { CreateThreadResponse, ListThreadsResponse, GetThreadResponse } from "@lumina/contract";
 import { getDb } from "../db/mongo.js";
 
 export const threadsRouter = Router();
@@ -11,10 +11,42 @@ threadsRouter.post("/threads", async (req, res) => {
   const threadId = "thr_" + randomUUID().slice(0, 8);
   await db.collection("threads").insertOne({
     threadId,
+    title: typeof req.body?.title === "string" && req.body.title.trim() ? req.body.title.trim() : "Untitled",
     userId: req.headers["x-user-id"],
     createdAt: new Date(),
   });
   res.status(201).json(CreateThreadResponse.parse({ threadId }));
+});
+
+// GET /threads -> 200 { threads } for this user, newest first.
+// Declared before /threads/:id so "threads" is not read as an id.
+threadsRouter.get("/threads", async (req, res) => {
+  const db = await getDb();
+  const rows = await db
+    .collection("threads")
+    .find({ userId: req.headers["x-user-id"] })
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .toArray();
+
+  // The ask route auto-creates a thread doc for whatever id is in the URL, and
+  // the benchmark asks against ids like "bench-rag" that predate the thr_
+  // prefix. Those rows are real, but they cannot satisfy the contract, and
+  // validating the whole list at once would make one of them 500 the endpoint.
+  const threads: Array<{ threadId: string; title: string; createdAt: string }> = [];
+  let skipped = 0;
+  for (const t of rows) {
+    const candidate = {
+      threadId: t.threadId as string,
+      title: (t.title as string) ?? "Untitled",
+      createdAt: new Date(t.createdAt ?? 0).toISOString(),
+    };
+    if (ListThreadsResponse.shape.threads.element.safeParse(candidate).success) threads.push(candidate);
+    else skipped++;
+  }
+  if (skipped) console.warn(`GET /threads: skipped ${skipped} row(s) that do not match the contract`);
+
+  res.json(ListThreadsResponse.parse({ threads }));
 });
 
 // GET /threads/:id -> 200 { messages } | 404 unknown thread
@@ -36,5 +68,5 @@ threadsRouter.get("/threads/:id", async (req, res) => {
     { role: "assistant" as const, content: a.text as string, sources: a.sources ?? [], artifacts: [] },
   ]);
 
-  res.json(ThreadMessagesResponse.parse({ messages }));
+  res.json(GetThreadResponse.parse({ messages }));
 });

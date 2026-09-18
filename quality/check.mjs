@@ -1,124 +1,229 @@
 #!/usr/bin/env node
-// LUMINA's quality gate. Staff never shipped quality/check.mjs (still "Not
-// yet in the repo" per quality/README.md), so built per PRD 15: reads
-// expectations.json and every runs/*.json, asserts by arithmetic only --
-// budgets (B1 tokens, B2 wall clock, B3 cost), trajectory rules (A1 errors
-// surface, A2 honest termination, A3 thrash guard, R2 no artifact tools on
-// the ask path), and contract sanity (C1). No model judges anywhere here.
+// Quality checker for the 2026-03 cohort.
+// Zero dependencies. Node 18+.
 //
-// Usage: node quality/check.mjs .      # exit 0 pass, 1 warnings, 2 errors
-import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+//   node quality/check.mjs projects/argus
+//
+// rules.json holds the case law (metadata, precedent, params).
+// This file holds the executables. A rule id with no CHECKS entry is reported as
+// unimplemented rather than silently passing.
 
-const projectRoot = resolve(process.cwd(), process.argv[2] || ".");
-const findings = []; // { rule, severity: "error" | "warn", message }
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
+import { join, resolve, dirname, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-function fail(rule, severity, message) {
-  findings.push({ rule, severity, message });
-}
+const HERE = dirname(fileURLToPath(import.meta.url));
 
-// ---- Load expectations.json ------------------------------------------------
-const expectationsPath = resolve(projectRoot, "expectations.json");
-if (!existsSync(expectationsPath)) {
-  console.error(`missing ${expectationsPath}`);
+// ---------------------------------------------------------------- helpers
+
+const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const pass = (detail = '') => ({ status: 'pass', detail });
+const fail = (detail) => ({ status: 'fail', detail });
+const skip = (detail) => ({ status: 'skip', detail });
+const manual = (detail) => ({ status: 'manual', detail });
+
+// Every run-dependent check folds over all runs and fails on the first bad one.
+const overRuns = (ctx, fn) => {
+  if (!ctx.runs.length) return skip('no run logs found');
+  const bad = [];
+  for (const run of ctx.runs) {
+    const r = fn(run, ctx);
+    if (r) bad.push(`${run._id}: ${r}`);
+  }
+  return bad.length ? fail(bad.join('; ')) : pass(`${ctx.runs.length} run(s)`);
+};
+
+const toolNames = (run) => (run.toolCalls || []).map((t) => t.name);
+
+// ---------------------------------------------------------------- checks
+
+const CHECKS = {
+  C1: (ctx) => {
+    const { exp } = ctx;
+    const problems = [];
+    for (const [k, v] of Object.entries(exp.budget || {})) {
+      if (!isNum(v) || v <= 0) problems.push(`budget.${k} must be a positive number, got ${JSON.stringify(v)}`);
+    }
+    for (const [k, v] of Object.entries(exp.eval || {})) {
+      if (!k.startsWith('min') && !k.startsWith('max')) continue;
+      if (!isNum(v)) { problems.push(`eval.${k} must be a number, got ${JSON.stringify(v)}`); continue; }
+      if (v < 0 || v > 1) problems.push(`eval.${k}=${v} is outside 0..1 and can never be satisfied`);
+    }
+    const gold = exp.eval?.goldSetPath;
+    if (gold && !existsSync(join(ctx.root, gold))) problems.push(`eval.goldSetPath missing: ${gold}`);
+    const t = exp.trajectory || {};
+    for (const a of t.mustCallTools || []) {
+      if ((t.mustNotCallTools || []).includes(a)) problems.push(`tool "${a}" is both required and forbidden`);
+    }
+    return problems.length ? fail(problems.join('; ')) : pass('contract coherent');
+  },
+
+  A1: (ctx) => overRuns(ctx, (run) => {
+    const bad = (run.toolCalls || []).filter((t) => t.ok === false && !String(t.error || '').trim());
+    return bad.length ? `${bad.length} failed call(s) with no error string` : null;
+  }),
+
+  A2: (ctx) => overRuns(ctx, (run) => {
+    if (ctx.exp.trajectory?.mustTerminate === false) return null;
+    return run.terminated === 'done' ? null : `terminated=${JSON.stringify(run.terminated)}`;
+  }),
+
+  A3: (ctx, rule) => {
+    const cap = ctx.exp.trajectory?.maxConsecutiveSameTool ?? rule.params?.maxConsecutiveSameTool ?? 3;
+    return overRuns(ctx, (run) => {
+      let streak = 0, prev = null, worst = 0, who = null;
+      for (const n of toolNames(run)) {
+        streak = n === prev ? streak + 1 : 1;
+        prev = n;
+        if (streak > worst) { worst = streak; who = n; }
+      }
+      return worst > cap ? `"${who}" called ${worst}x consecutively (cap ${cap})` : null;
+    });
+  },
+
+  R1: (ctx) => {
+    const required = ctx.exp.trajectory?.mustCallTools || [];
+    if (!required.length) return skip('none declared');
+    return overRuns(ctx, (run) => {
+      const called = new Set(toolNames(run));
+      const missing = required.filter((t) => !called.has(t));
+      return missing.length ? `never called ${missing.join(', ')}` : null;
+    });
+  },
+
+  R2: (ctx) => {
+    const forbidden = ctx.exp.trajectory?.mustNotCallTools || [];
+    if (!forbidden.length) return skip('none declared');
+    return overRuns(ctx, (run) => {
+      const called = new Set(toolNames(run));
+      const hit = forbidden.filter((t) => called.has(t));
+      return hit.length ? `called forbidden ${hit.join(', ')}` : null;
+    });
+  },
+
+  E1: (ctx, rule) => {
+    const gold = ctx.exp.eval?.goldSetPath;
+    if (!gold) return skip('no goldSetPath declared');
+    const p = join(ctx.root, gold);
+    if (!existsSync(p)) return fail(`missing: ${gold}`);
+    const n = readFileSync(p, 'utf8').split('\n').filter((l) => l.trim()).length;
+    const min = rule.params?.minGoldItems ?? 30;
+    return n < min ? fail(`${n} items, need ${min}`) : pass(`${n} items`);
+  },
+
+  E2: (ctx) => {
+    const decl = ctx.exp.eval || {};
+    const thresholds = Object.entries(decl).filter(([k]) => k.startsWith('min') || k.startsWith('max'));
+    if (!thresholds.length) return skip('no thresholds declared');
+    if (!ctx.evalReport) return skip('no eval report — run the eval first');
+    const problems = [];
+    for (const [k, want] of thresholds) {
+      const metric = k.replace(/^(min|max)/, '');
+      const key = metric.charAt(0).toLowerCase() + metric.slice(1);
+      const got = ctx.evalReport[key];
+      if (!isNum(got)) { problems.push(`${key} absent from eval report`); continue; }
+      if (k.startsWith('min') && got < want) problems.push(`${key}=${got} < ${want}`);
+      if (k.startsWith('max') && got > want) problems.push(`${key}=${got} > ${want}`);
+    }
+    return problems.length ? fail(problems.join('; ')) : pass(`${thresholds.length} threshold(s) met`);
+  },
+
+  E3: () => manual('confirm no error-severity rule derives its verdict from a model'),
+
+  B1: (ctx) => {
+    const cap = ctx.exp.budget?.maxTokensPerRun;
+    if (!isNum(cap)) return skip('not declared');
+    return overRuns(ctx, (r) => (isNum(r.tokens) && r.tokens > cap ? `${r.tokens} tokens > ${cap}` : null));
+  },
+
+  B2: (ctx) => {
+    const cap = ctx.exp.budget?.maxWallClockSec;
+    if (!isNum(cap)) return skip('not declared');
+    return overRuns(ctx, (r) => (isNum(r.wallClockSec) && r.wallClockSec > cap ? `${r.wallClockSec}s > ${cap}s` : null));
+  },
+
+  B3: (ctx) => {
+    const cap = ctx.exp.budget?.maxCostUsd;
+    if (!isNum(cap)) return skip('not declared');
+    return overRuns(ctx, (r) => (isNum(r.costUsd) && r.costUsd > cap ? `$${r.costUsd} > $${cap}` : null));
+  },
+
+  P1: () => manual('name the successful and failing trajectories you read end to end'),
+
+  P2: (ctx) => {
+    const todo = ctx.rules
+      .filter((r) => (r.precedent || []).some((p) => String(p).trim().startsWith('TODO')))
+      .map((r) => r.id);
+    return todo.length ? fail(`${todo.length} rule(s) still lack a real precedent: ${todo.join(', ')}`) : pass('all rules cite a precedent');
+  },
+};
+
+// ---------------------------------------------------------------- main
+
+const projectArg = process.argv[2];
+if (!projectArg) {
+  console.error('usage: node quality/check.mjs <project-dir>');
   process.exit(2);
 }
-const expectations = JSON.parse(readFileSync(expectationsPath, "utf8"));
-const { budget, trajectory, eval: evalCfg } = expectations;
+const root = resolve(projectArg);
+const name = basename(root);
 
-// ---- C1: contract / config sanity ------------------------------------------
-for (const [key, val] of Object.entries(budget)) {
-  if (!(typeof val === "number" && val > 0)) fail("C1", "error", `budget.${key} must be a positive number, got ${val}`);
+const expPath = join(root, 'expectations.json');
+if (!existsSync(expPath)) {
+  console.log(`quality: ${name} has no expectations.json — skipped`);
+  process.exit(0);
 }
-for (const key of ["minCitationGrounding", "minRecallAt5", "minRetrievalRate", "maxErrorRate"]) {
-  const val = evalCfg[key];
-  if (!(typeof val === "number" && val >= 0 && val <= 1)) {
-    fail("C1", "error", `eval.${key} must be in 0..1, got ${val}`);
-  }
-}
-const goldPath = resolve(projectRoot, evalCfg.goldSetPath);
-if (!existsSync(goldPath)) fail("C1", "error", `eval.goldSetPath does not exist: ${evalCfg.goldSetPath}`);
-
-const required = new Set(trajectory.mustCallTools ?? []);
-const forbidden = new Set(trajectory.mustNotCallTools ?? []);
-for (const t of required) {
-  if (forbidden.has(t)) fail("C1", "error", `tool "${t}" is both required and forbidden`);
+const exp = readJson(expPath);
+if (!exp.quality || Object.values(exp.quality).every((v) => !v)) {
+  console.log(`quality: ${name} has not opted in — skipped`);
+  process.exit(0);
 }
 
-// ---- Load runs/*.json -------------------------------------------------------
-const runsDir = resolve(projectRoot, "runs");
-const runFiles = existsSync(runsDir) ? readdirSync(runsDir).filter((f) => f.endsWith(".json")) : [];
+const runsDir = join(root, 'runs');
+const runs = existsSync(runsDir)
+  ? readdirSync(runsDir)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => ({ ...readJson(join(runsDir, f)), _id: f.replace(/\.json$/, '') }))
+  : [];
 
-if (runFiles.length === 0) {
-  fail("RUN", "warn", "no runs/*.json found -- nothing to check yet (ask a few real questions, or npm run export:runs against a deployed instance)");
+const evalPath = join(root, 'reports', 'eval.json');
+const evalReport = existsSync(evalPath) ? readJson(evalPath) : null;
+
+const { rules } = readJson(join(HERE, 'rules.json'));
+const ctx = { root, exp, runs, evalReport, rules };
+
+const GLYPH = { pass: '✓', fail: '✗', skip: '–', manual: '☐', unimplemented: '?' };
+const results = [];
+let errors = 0, warnings = 0;
+
+for (const rule of rules) {
+  const fn = CHECKS[rule.id];
+  let r;
+  if (!fn) r = { status: 'unimplemented', detail: 'no executable for this rule id' };
+  else {
+    try { r = fn(ctx, rule); }
+    catch (e) { r = fail(`checker threw: ${e.message}`); }
+  }
+
+  if (r.status === 'fail') {
+    if (rule.severity === 'error') errors++;
+    else if (rule.severity === 'warn') warnings++;
+  }
+  if (r.status === 'unimplemented') warnings++;
+
+  results.push({ id: rule.id, title: rule.title, severity: rule.severity, ...r });
+  const line = `${rule.id} ${GLYPH[r.status]}  ${rule.title}`;
+  console.log(r.detail ? `${line}\n      ${r.detail}` : line);
 }
 
-const maxConsecutive = trajectory.maxConsecutiveSameTool ?? 3;
+mkdirSync(join(root, 'reports'), { recursive: true });
+writeFileSync(
+  join(root, 'reports', 'quality.json'),
+  JSON.stringify({ project: name, checkedAt: new Date().toISOString(), runs: runs.length, errors, warnings, results }, null, 2)
+);
 
-for (const file of runFiles) {
-  const label = file;
-  let run;
-  try {
-    run = JSON.parse(readFileSync(resolve(runsDir, file), "utf8"));
-  } catch (e) {
-    fail("RUN", "error", `${label}: not valid JSON (${e})`);
-    continue;
-  }
-
-  const toolCalls = Array.isArray(run.toolCalls) ? run.toolCalls : [];
-
-  // A1: a failed tool call must carry a non-empty error.
-  for (const [i, tc] of toolCalls.entries()) {
-    if (tc.ok === false && !(typeof tc.error === "string" && tc.error.length > 0)) {
-      fail("A1", "error", `${label}: toolCalls[${i}] (${tc.name}) is ok:false with no non-empty error`);
-    }
-  }
-
-  // A2: honest termination -- must be set, and a run that hit the tool-call
-  // cap must not be mislabeled "done".
-  if (trajectory.mustTerminate && !["done", "cap", "error"].includes(run.terminated)) {
-    fail("A2", "error", `${label}: terminated is missing or invalid (${run.terminated})`);
-  }
-  if (toolCalls.length >= budget.maxToolCalls && run.terminated === "done") {
-    fail("A2", "error", `${label}: hit the ${budget.maxToolCalls}-tool-call cap but reported terminated: "done"`);
-  }
-
-  // A3: thrash guard -- no more than maxConsecutiveSameTool identical calls in a row.
-  let streak = 1;
-  for (let i = 1; i < toolCalls.length; i++) {
-    streak = toolCalls[i].name === toolCalls[i - 1].name ? streak + 1 : 1;
-    if (streak > maxConsecutive) {
-      fail("A3", "error", `${label}: tool "${toolCalls[i].name}" called ${streak} times in a row (max ${maxConsecutive})`);
-      break;
-    }
-  }
-
-  // R2: the ask path never spends on artifacts.
-  for (const t of toolCalls) {
-    if (forbidden.has(t.name)) fail("R2", "error", `${label}: forbidden tool "${t.name}" called from the ask path`);
-  }
-
-  // B1/B2/B3: per-run budgets.
-  if (typeof run.tokens === "number" && run.tokens > budget.maxTokensPerRun) {
-    fail("B1", "error", `${label}: tokens ${run.tokens} > budget.maxTokensPerRun ${budget.maxTokensPerRun}`);
-  }
-  if (typeof run.wallClockSec === "number" && run.wallClockSec > budget.maxWallClockSec) {
-    fail("B2", "error", `${label}: wallClockSec ${run.wallClockSec} > budget.maxWallClockSec ${budget.maxWallClockSec}`);
-  }
-  if (typeof run.costUsd === "number" && run.costUsd > budget.maxCostUsd) {
-    fail("B3", "error", `${label}: costUsd ${run.costUsd} > budget.maxCostUsd ${budget.maxCostUsd}`);
-  }
-}
-
-// ---- Report -----------------------------------------------------------------
-const errors = findings.filter((f) => f.severity === "error");
-const warnings = findings.filter((f) => f.severity === "warn");
-
-console.log(`checked ${runFiles.length} run(s) against ${expectationsPath}\n`);
-for (const f of findings) {
-  console.log(`  ${f.severity === "error" ? "ERROR" : "WARN "}  [${f.rule}]  ${f.message}`);
-}
-if (findings.length === 0) console.log("  no findings.");
-
-console.log(`\n${errors.length} error(s), ${warnings.length} warning(s)`);
-process.exit(errors.length > 0 ? 2 : warnings.length > 0 ? 1 : 0);
+const exitCode = errors ? 2 : warnings ? 1 : 0;
+console.log(`\n${name}: ${errors} error(s), ${warnings} warning(s) — exit ${exitCode}`);
+console.log(`report: ${join(root, 'reports', 'quality.json')}`);
+process.exit(exitCode);

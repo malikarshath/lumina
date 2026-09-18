@@ -12,6 +12,97 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-18 · Session 26: Deep Search conformed to the official contract
+
+**Did**
+- Read the official scaffold at `../` as the source of truth rather than trusting the four-item gap
+  list in [[PROGRESS]]: `packages/contract/src/sse.ts` + `http.ts`, `eval/rubric.json`,
+  `benchmark/sla.json`, `benchmark/bench.mjs` (the deep phase, ~lines 500–724), `benchmark/lib.mjs`
+  (the SSE parser that decides what "plan before retrieval" even means), and `expectations.json`.
+- **Found two gaps the list had missed, both blockers.**
+  1. The gear is **`depth: quick|deep`**, a separate field from `mode: auto|web|docs`. Our
+     `AskRequest` had `mode: [..., "deep"]` and `ask.ts` dispatched on `mode === "deep"`. Zod strips
+     unknown keys, so the bench's `{mode:"auto", depth:"deep"}` would have parsed clean, run the
+     **quick** loop, and scored 0 of 15 while looking perfect in our own UI. Split the two axes:
+     `Mode` is back to `auto|web|docs`, added `Depth`, both with defaults.
+  2. Our `expectations.json` still held the quick envelope ($0.05 / 8 calls / 90 s / 3 consecutive).
+     Staff widened the official one to the DEEP envelope ($0.35 / 24 / 240 s / 4) exactly because
+     `quality/check.mjs` applies one budget to every run log. Adopted their values and their
+     reasoning comments, keeping `generate_image`/`make_presentation` in `mustNotCallTools` (they
+     are forbidden at *both* depths, unlike `plan_research`).
+- Closed the four known gaps: a real `plan` SSE event (`{subQuestions:[{i,question,reason}]}`)
+  emitted before the first trace step; `subQuestion` as a top-level integer on every retrieval trace
+  step **and** every source (it was previously buried inside `fetch_page`'s `input` and absent from
+  sources entirely); `plan_subquestions` → `plan_research`; `DEEP_DAILY_CAP` (default 5) enforced in
+  the agent service before `sseInit`, since once SSE headers flush the status is 200 and a 429 is no
+  longer sendable.
+- Extracted `dailyCap.ts` (`reserveDailySlot`, `countToday`, `nextResetIso`) and pointed both the
+  image cap and the new deep cap at it — one implementation, two callers. `/stats` now reports
+  `deepToday` (per `X-User-Id`) and `deepDailyCap`, read from the same counter the cap reserves
+  against, so what `/stats` says is spent is the number that will actually refuse the next request.
+- `done` now carries `depth` and `subQuestions`; the run log carries `depth`.
+- Restructured the deep loop from two global phases (all searches, then all fetches) into
+  **per-sub-question units** (its own search, then the pages that search found), with the units
+  running concurrently. Same parallelism, lower latency (a unit no longer waits for everyone else's
+  search), and it fixes a real A3 violation: 15 `fetch_page` calls in a row against the official
+  `maxConsecutiveSameTool: 4`. Now max 3 in a row. URLs are claimed synchronously as each search
+  returns, so two sub-questions never fetch or cite the same page twice.
+- **Fixed a genuine defect in the QUICK loop** found while chasing `min_deep_source_ratio`: it
+  registered every `web_search` result as a `source` — 10 sources for a question it had opened 3
+  pages for. A page now earns a citation number only when `fetch_page` has read it, and the number
+  is handed back in the tool result (`Cite this page as [n].`) so the model can only cite what it
+  actually read.
+- UI: `mode` and `depth` are now separate controls (a Deep search toggle, not a fourth mode), a plan
+  panel renders the numbered sub-questions with their reasons above the answer, `Q{n}` badges on
+  trace steps and sources, and the 429 body is rendered as "…cap reached — resets at …" rather than
+  raw JSON.
+
+**Proved**
+- `tsc --noEmit` clean in `packages/contract`, `backend/agent`, and `web`.
+- Wrote a local re-implementation of the official bench's deep caps (`deepPlan`,
+  `deepAttribution`, `deepReadsMore`, `deepBudget`, `quickNeverEscalates`, contiguity, dangling
+  citations, `depth`/`subQuestions` on `done`) and ran it against a **real captured SSE stream**
+  from a real Anthropic + Tavily + Atlas run. **11/11 pass:** 5 sub-questions planned with
+  `planBeforeRetrieval=true`, 20/20 retrieval steps and 15/15 sources tagged, numbering 1…15
+  contiguous, 9 distinct citations with 0 dangling, $0.119446 of $0.35, 21 of 24 tool calls, 39.5 s
+  of 90 s, and 15 deep vs 3 quick distinct sources = **5.00x** against the 2.0x target.
+- Stream order confirmed by event counts: `1 plan, 21 trace, 1 sources, 467 token, 1 done`.
+- The daily cap, proven without burning six deep runs: `/stats` showed `deepToday: 3` for the test
+  user, so `DEEP_DAILY_CAP` was set to 3 and the agent restarted. The next deep request returned
+  **`429 {"error":"daily deep search cap reached","resetsAt":"2026-09-19T00:00:00.000Z"}` in 1.2 s**
+  — refused before any provider spend. A different `X-User-Id` still showed `deepToday: 0`, and the
+  capped user's **quick** request still returned 200. Cap restored to 5.
+- `node quality/check.mjs .` over one real quick + one real deep run: `no findings. 0 error(s), 0
+  warning(s)`. Before adopting the deep envelope the same runs produced 9 errors (B3 cost, A2
+  false-cap, A3 consecutive-tool) — which is how gap #2 was found.
+- Quick run after the source fix: 3 sources, citations `[1,2,3]`, **0 dangling**, `depth: "quick"`,
+  5 tool calls, none of them `plan_research`.
+- A real deep run log on disk: `depth: "deep"`, `terminated: "done"`, first tool call
+  `plan_research`, `{plan_research: 1, web_search: 5, fetch_page: 15}`.
+
+**Learned**
+- A gap list written from the prose docs missed the two gaps that actually mattered, and both were
+  only visible in the executable artifacts — the zod schema and `benchmark/lib.mjs`. The `depth` one
+  is the nastier kind of bug: zod's default strip-unknown-keys behaviour meant the wrong request
+  shape failed **silently and plausibly**, running the cheap gear while reporting success. Same
+  shape as the Live Translate precedent in `AGENTS.md`. Read the grader's code, not its README.
+- "Sources" had quietly come to mean "things search mentioned" instead of "things we read". Nobody
+  would have caught it from the UI — it looked *better*, with more chips. It took an arithmetic
+  check comparing two gears to expose it, which is the argument for declaring ratios up front.
+- A cap enforced after `sseInit` cannot return 429. Ordering is part of the contract, not just the
+  event sequence.
+
+**Next**
+- Malik's call on the quick-cost trade-off: quick hit $0.0745 on the hard multi-part question, over
+  `max_cost_per_answer_usd` ($0.05), because every turn resends all prior tool results. See the
+  blockers table in [[PROGRESS]] for the three options.
+- Set the `DEEP_*` env vars explicitly on Render (defaults work, but an implied cap is not a
+  declared one), then re-run the official `benchmark/bench.mjs` against the deployed gateway.
+- Still owed: a browser click-through of the new depth toggle and plan panel, and the two manual
+  rubric rows (deep-search-quality judgement and the trajectory read-through) that only Malik can do.
+
+---
+
 ## 2026-09-17 · Session 25: UI redesign — collapsible Trace/Sources sidebar, markdown
 
 **Did**

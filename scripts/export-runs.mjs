@@ -1,46 +1,67 @@
-// Dumps the durable `runs` Mongo collection into local runs/<requestId>.json
-// files, in the exact PRD 13 shape. The agent's filesystem doesn't survive a
-// redeploy on Render, so this is how quality/check.mjs gets something to read
-// when grading against a live deployed instance instead of a local run.
-import { MongoClient } from "mongodb";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { readFileSync, existsSync } from "node:fs";
+#!/usr/bin/env node
+/**
+ * Dump the `runs` collection into runs/<requestId>.json. PROVIDED.
+ *
+ * MONGO-ONLY CONVENIENCE, not a gate. If your run logs live somewhere else, get them into
+ * runs/<requestId>.json in the RunLog shape by whatever means suits: that shape is what
+ * quality/check.mjs reads, and it is the only contractual part.
+ *
+ *   node scripts/export-runs.mjs                     # from MONGODB_URI in .env
+ *   node scripts/export-runs.mjs --limit 200
+ *
+ * Your service writes a run log per answer locally; a deployed instance writes them to
+ * Mongo instead. This is how you get a deployed run's trajectories onto disk so
+ * `node quality/check.mjs .` can read them.
+ */
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { config } from 'dotenv';
+import { MongoClient } from 'mongodb';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const root = resolve(here, "..");
-const runsDir = resolve(root, "runs");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(HERE, '..');
+config({ path: join(ROOT, '.env') });
 
-// Load .env the same way the services do, without adding a dotenv dependency here.
-const envPath = resolve(root, ".env");
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
-  }
-}
+const arg = (name, fallback) => {
+  const i = process.argv.indexOf(`--${name}`);
+  return i > -1 ? process.argv[i + 1] : fallback;
+};
 
 const uri = process.env.MONGODB_URI;
 if (!uri) {
-  console.error("MONGODB_URI is not set (checked .env and the environment)");
-  process.exit(1);
+  console.error('MONGODB_URI is not set.');
+  process.exit(2);
 }
 
-const client = new MongoClient(uri);
-await client.connect();
-const db = client.db(process.env.MONGODB_DB || "lumina");
+const limit = Number(arg('limit', 500));
+const outDir = resolve(ROOT, arg('out', 'runs'));
+mkdirSync(outDir, { recursive: true });
 
-const docs = await db.collection("runs").find({}).toArray();
-mkdirSync(runsDir, { recursive: true });
+const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
+try {
+  await client.connect();
+  const runs = await client
+    .db(process.env.MONGODB_DB ?? 'lumina')
+    .collection('runs')
+    .find({}, { sort: { createdAt: -1 }, limit })
+    .toArray();
 
-let n = 0;
-for (const d of docs) {
-  const { tokens, wallClockSec, costUsd, terminated, toolCalls } = d;
-  const body = { tokens, wallClockSec, costUsd, terminated, toolCalls };
-  writeFileSync(resolve(runsDir, `${d.requestId}.json`), JSON.stringify(body, null, 2));
-  n++;
+  if (!runs.length) {
+    console.log('no runs in Mongo yet — has your ask path written any?');
+    process.exit(0);
+  }
+
+  for (const run of runs) {
+    const id = run.requestId ?? String(run._id);
+    // Only the fields quality/check.mjs reads, so the file on disk is the declared shape.
+    const { tokens, wallClockSec, costUsd, terminated, toolCalls } = run;
+    writeFileSync(
+      join(outDir, `${id}.json`),
+      JSON.stringify({ tokens, wallClockSec, costUsd, terminated, toolCalls }, null, 2)
+    );
+  }
+  console.log(`wrote ${runs.length} run log(s) to ${outDir}`);
+} finally {
+  await client.close();
 }
-
-console.log(`exported ${n} run log(s) to ${runsDir}`);
-await client.close();

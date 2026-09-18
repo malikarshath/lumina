@@ -2,7 +2,9 @@ import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
+import { CreateSpaceResponse, ListSpacesResponse } from "@lumina/contract";
 import { getDb } from "../db/mongo.js";
+import { ObjectId, uploadBuffer } from "../db/gridfs.js";
 
 export const spacesRouter = Router();
 
@@ -22,7 +24,34 @@ spacesRouter.post("/spaces", async (req, res) => {
     userId: req.headers["x-user-id"],
     createdAt: new Date(),
   });
-  res.status(201).json({ spaceId, name });
+  res.status(201).json(CreateSpaceResponse.parse({ spaceId, name }));
+});
+
+// GET /spaces -> 200 { spaces } for this user, newest first.
+spacesRouter.get("/spaces", async (req, res) => {
+  const db = await getDb();
+  const rows = await db
+    .collection("spaces")
+    .find({ userId: req.headers["x-user-id"] })
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .toArray();
+
+  // Same reasoning as GET /threads: one legacy row must not 500 the list.
+  const spaces: Array<{ spaceId: string; name: string; createdAt: string }> = [];
+  let skipped = 0;
+  for (const s of rows) {
+    const candidate = {
+      spaceId: s.spaceId as string,
+      name: (s.name as string) ?? "Untitled",
+      createdAt: new Date(s.createdAt ?? 0).toISOString(),
+    };
+    if (ListSpacesResponse.shape.spaces.element.safeParse(candidate).success) spaces.push(candidate);
+    else skipped++;
+  }
+  if (skipped) console.warn(`GET /spaces: skipped ${skipped} row(s) that do not match the contract`);
+
+  res.json(ListSpacesResponse.parse({ spaces }));
 });
 
 // Multer passes an error to the callback (rather than throwing) when the
@@ -51,26 +80,43 @@ spacesRouter.post("/spaces/:id/documents", handleUpload, async (req, res) => {
   if (!file) return res.status(400).json({ error: "file required (multipart field 'file')" });
 
   const docId = "doc_" + randomUUID().slice(0, 8);
-  const isPdf = file.mimetype === "application/pdf";
 
-  await db.collection("documents").insertOne({
-    docId,
-    spaceId,
-    title: file.originalname,
-    status: "pending",
-    pct: 0,
-    createdAt: new Date(),
-  });
+  // The bytes go to GridFS; the document row and the job carry only the id.
+  // Base64-on-the-job-row was worse than slow: it inflates the payload by a
+  // third and has to fit one BSON document, so a 25MB upload would exceed the
+  // 16MB limit outright.
+  //
+  // The id is minted here rather than read back from the write, so the file
+  // and the document row go out CONCURRENTLY. Every Atlas round trip on this
+  // path is latency the client waits through before its 202, and the accept
+  // budget is 300ms.
+  const fileId = new ObjectId();
+  await Promise.all([
+    uploadBuffer(file.originalname, file.buffer, file.mimetype, "uploads", fileId),
+    db.collection("documents").insertOne({
+      docId,
+      spaceId,
+      userId: req.headers["x-user-id"],
+      title: file.originalname,
+      status: "pending",
+      pct: 0,
+      fileId: fileId.toString(),
+      mime: file.mimetype,
+      bytes: file.size,
+      createdAt: new Date(),
+    }),
+  ]);
 
-  // Enqueue the slow work for the jobs worker (fast 202, no parsing in the request path).
+  // The job goes in LAST, deliberately. It is the signal that makes this
+  // ingest claimable, and a worker that claimed it before the bytes finished
+  // landing would fail on a file that was about to exist.
   await db.collection("jobs").insertOne({
     kind: "ingest_document",
     docId,
     spaceId,
     mime: file.mimetype,
-    text: isPdf ? undefined : file.buffer.toString("utf8"),
-    data: isPdf ? file.buffer.toString("base64") : undefined,
-    status: "queued",
+    fileId: fileId.toString(),
+    status: "pending",
     attempts: 0,
     createdAt: new Date(),
   });

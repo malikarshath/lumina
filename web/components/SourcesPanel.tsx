@@ -23,6 +23,11 @@ export function SourcesPanel({ sources }: { sources: Source[] }) {
                 ) : (
                   <span className="text-neutral-200">📄 {s.title}</span>
                 )}
+                {s.subQuestion !== undefined && (
+                  <span className="ml-1.5 rounded bg-amber-950/60 px-1.5 text-xs text-amber-500/90">
+                    Q{s.subQuestion}
+                  </span>
+                )}
                 {s.snippet && <p className="mt-0.5 text-xs text-neutral-500">{s.snippet.slice(0, 160)}…</p>}
               </li>
             ))}

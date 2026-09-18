@@ -27,13 +27,54 @@ export async function saveMemory(userId: string, text: string, sourceThread?: st
   return id;
 }
 
-// Per-user sets are small, so fetch the user's memories and rank in JS —
-// no Atlas Search index needed (M0 caps those; we spend them on chunks).
+/**
+ * Semantic recall over the user's long-term memories.
+ *
+ * Primary path is Atlas Vector Search on the provided `memories_vector` index,
+ * filtered by `userId` inside the vector stage so one user's memories can
+ * never rank into another's results. The in-JS cosine scan is kept only as a
+ * fallback for a cluster with no Atlas Search (local `mongod`, or an index
+ * still building) -- it is correct but reads every memory the user owns, which
+ * stops scaling the moment a user has a few thousand.
+ */
 export async function recallMemory(userId: string, query: string, topK = 5): Promise<Memory[]> {
   const db = await getDb();
+  const [qv] = await embed([query]);
+
+  try {
+    const hits = await db
+      .collection("memories")
+      .aggregate([
+        {
+          $vectorSearch: {
+            index: "memories_vector",
+            path: "embedding",
+            queryVector: qv,
+            numCandidates: Math.max(50, topK * 20),
+            limit: topK,
+            filter: { userId: { $eq: userId } },
+          },
+        },
+        { $project: { _id: 0, id: 1, text: 1, sourceThread: 1, createdAt: 1 } },
+      ])
+      .toArray();
+    if (hits.length > 0) return hits as Memory[];
+  } catch {
+    // Index missing or still building: fall through to the scan rather than
+    // returning "no memories", which would look like the user never saved any.
+  }
+
+  return recallByScan(db, userId, qv, topK);
+}
+
+async function recallByScan(
+  db: Awaited<ReturnType<typeof getDb>>,
+  userId: string,
+  qv: number[],
+  topK: number,
+): Promise<Memory[]> {
   const rows = (await db.collection("memories").find({ userId }).toArray()) as any[];
   if (rows.length === 0) return [];
-  const [qv] = await embed([query]);
   return rows
     .map((r) => ({ r, score: cosine(qv, r.embedding as number[]) }))
     .sort((a, b) => b.score - a.score)

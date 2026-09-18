@@ -1,19 +1,17 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { CreateArtifactRequest, CreateArtifactResponse, ArtifactStatusResponse } from "@lumina/contract";
+import {
+  ArtifactStatusResponse,
+  CreateArtifactRequest,
+  CreateArtifactResponse,
+} from "./artifactSchemas.js";
 import { getDb } from "../db/mongo.js";
 import { downloadStream } from "../db/gridfs.js";
+import { nextResetIso, reserveDailySlot } from "../dailyCap.js";
 
 export const artifactsRouter = Router();
 
 const IMAGE_DAILY_CAP = Number(process.env.IMAGE_DAILY_CAP) || 10;
-
-const todayKey = () => new Date().toISOString().slice(0, 10); // UTC day
-const nextResetIso = () => {
-  const d = new Date();
-  d.setUTCHours(24, 0, 0, 0);
-  return d.toISOString();
-};
 
 // POST /artifacts { kind, threadId, answerId?, prompt? } -> 202 { artifactId, kind, status: "pending" }
 // The ask loop never calls generate_image / make_presentation (R2) — this is the only door to them,
@@ -34,13 +32,8 @@ artifactsRouter.post("/artifacts", async (req, res) => {
   if (kind === "image") {
     // Reserve today's slot atomically before any provider spend — the
     // (cap+1)th request must 429 even if earlier ones are still generating.
-    const key = todayKey();
-    const usage = await db.collection("imageUsage").findOneAndUpdate(
-      { userId, day: key },
-      { $inc: { count: 1 }, $setOnInsert: { userId, day: key } },
-      { upsert: true, returnDocument: "after" },
-    );
-    if ((usage?.count ?? 1) > IMAGE_DAILY_CAP) {
+    const used = await reserveDailySlot("imageUsage", userId);
+    if (used > IMAGE_DAILY_CAP) {
       return res.status(429).json({ error: "daily image cap reached", resetsAt: nextResetIso() });
     }
   }
@@ -62,7 +55,7 @@ artifactsRouter.post("/artifacts", async (req, res) => {
     answerId,
     prompt,
     userId,
-    status: "queued",
+    status: "pending",
     attempts: 0,
     createdAt: new Date(),
   });

@@ -1,10 +1,12 @@
 import { Router } from "express";
 import { StatsResponse } from "@lumina/contract";
 import { getDb } from "../db/mongo.js";
+import { countToday } from "../dailyCap.js";
 
 export const statsRouter = Router();
 
 const IMAGE_DAILY_CAP = Number(process.env.IMAGE_DAILY_CAP) || 10;
+const DEEP_DAILY_CAP = Number(process.env.DEEP_DAILY_CAP) || 5;
 
 function startOfTodayUtc(): Date {
   const d = new Date();
@@ -16,9 +18,10 @@ function startOfTodayUtc(): Date {
 // writeRunLog() populates on every request -- the same source ask.ts logs
 // from at completion, so /stats.answers and /stats.costUsdToday reconcile
 // with the agent's own log by construction, not by coincidence.
-statsRouter.get("/stats", async (_req, res) => {
+statsRouter.get("/stats", async (req, res) => {
   const db = await getDb();
   const since = startOfTodayUtc();
+  const userId = String(req.headers["x-user-id"] || "anon");
 
   const runsToday = await db.collection("runs").find({ createdAt: { $gte: since } }).toArray();
   const requests = runsToday.length;
@@ -38,6 +41,10 @@ statsRouter.get("/stats", async (_req, res) => {
     createdAt: { $gte: since },
   });
 
+  // Read from the same counter the cap reserves against, so what /stats reports
+  // as spent is the number that will actually refuse the next request.
+  const deepToday = await countToday("deepUsage", userId);
+
   res.json(
     StatsResponse.parse({
       requests,
@@ -47,6 +54,8 @@ statsRouter.get("/stats", async (_req, res) => {
       costUsdToday,
       imagesToday,
       imageDailyCap: IMAGE_DAILY_CAP,
+      deepToday,
+      deepDailyCap: DEEP_DAILY_CAP,
     }),
   );
 });

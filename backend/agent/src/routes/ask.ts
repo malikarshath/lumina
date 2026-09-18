@@ -1,17 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
-import { AskRequest } from "@lumina/contract";
+import { AskBody, StreamErrorEvent } from "@lumina/contract";
 import { sseInit, sseSend } from "../sse.js";
 import { runAskLoop } from "../loop/askLoop.js";
 import { runDeepLoop } from "../loop/deepLoop.js";
 import { writeRunLog } from "../observability/runLog.js";
 import { getDb } from "../db/mongo.js";
+import { nextResetIso, reserveDailySlot } from "../dailyCap.js";
 
 export const askRouter = Router();
 
+// Deep search is the expensive gear -- several times the cost of a quick one --
+// so it is the one that needs a spend gate. Enforced here in the agent service,
+// not the gateway: the gateway cannot know which gear a request asked for.
+const DEEP_DAILY_CAP = Number(process.env.DEEP_DAILY_CAP) || 5;
+
 askRouter.post("/threads/:id/ask", async (req, res) => {
   // Validate the body against the contract. Bad shape -> 400, before any streaming.
-  const parsed = AskRequest.safeParse(req.body);
+  const parsed = AskBody.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.message });
   }
@@ -30,11 +36,24 @@ askRouter.post("/threads/:id/ask", async (req, res) => {
     { upsert: true },
   );
 
+  const depth = parsed.data.depth;
+
+  // Before sseInit: once the SSE headers are flushed the status code is 200 and
+  // a 429 can no longer be sent. The slot is reserved atomically, so the
+  // (cap+1)th deep search is refused even while earlier ones are still running.
+  if (depth === "deep") {
+    const used = await reserveDailySlot("deepUsage", userId);
+    if (used > DEEP_DAILY_CAP) {
+      req.log.warn({ event: "deep_cap_reached", requestId, userId, used, cap: DEEP_DAILY_CAP });
+      return res.status(429).json({ error: "daily deep search cap reached", resetsAt: nextResetIso() });
+    }
+  }
+
   sseInit(res);
   try {
     // Deep Search is a fully separate code path and budget from the
     // interactive quick loop -- "Quick and Deep must stay separate".
-    const runLoop = parsed.data.mode === "deep" ? runDeepLoop : runAskLoop;
+    const runLoop = depth === "deep" ? runDeepLoop : runAskLoop;
     const summary = await runLoop(parsed.data, (event, data) => sseSend(res, event, data), userId, req.params.id);
     // One line a grader can grep by requestId and reconcile against /stats.
     req.log.info({ event: "answer_completed", requestId, ...summary });
@@ -42,7 +61,7 @@ askRouter.post("/threads/:id/ask", async (req, res) => {
   } catch (err) {
     // Fail loud: an error event instead of done, never a fake answer -- and
     // the run log still gets written, with terminated: "error" (A1/A2).
-    sseSend(res, "error", { event: "error", status: 502, error: String(err) });
+    sseSend(res, "error", StreamErrorEvent.parse({ status: 502, error: String(err) }));
     req.log.error({ event: "answer_failed", requestId, error: String(err) });
     await writeRunLog({
       requestId,
@@ -50,7 +69,12 @@ askRouter.post("/threads/:id/ask", async (req, res) => {
       wallClockSec: 0,
       costUsd: 0,
       terminated: "error",
-      toolCalls: [{ name: "ask_loop", ok: false, error: String(err) }],
+      // Empty rather than a synthetic "ask_loop" entry: toolCalls[].name is a
+      // ToolName in the contract, and from here we cannot attribute the failure
+      // to a specific tool. terminated:"error" is what carries the signal; the
+      // individual tool failures were already traced by the loop itself.
+      toolCalls: [],
+      depth,
     });
   } finally {
     res.end();

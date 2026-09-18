@@ -13,19 +13,32 @@ service (`:8000`). `X-User-Id` is required on every route except `/health` (`401
 POST /threads                       -> 201 { threadId: "thr_…" }
 GET  /threads/{id}                  -> 200 { messages: [ { role, content, sources: [...], artifacts: [...] } ] }
 
-POST /threads/{id}/ask              body: { query, mode: "auto" | "web" | "docs", spaceId?: "spc_…" }
+POST /threads/{id}/ask              body: { query, mode: "auto" | "web" | "docs",
+                                            depth?: "quick" | "deep",  (default "quick")
+                                            spaceId?: "spc_…" }
   -> 200 text/event-stream, events in this order:
-  event: trace    { step, tool, input, ok, ms, reason?, error? }      (one per tool call, before the answer)
-  event: sources  [ { n, kind: "web", title, url, snippet },
-                    { n, kind: "doc", docId, title, locator: { page | heading | line }, snippet } ]
+     quick:  trace* -> sources -> token* -> done
+     deep:   plan  -> trace* -> sources -> token* -> done
+
+  event: plan     { subQuestions: [ { i, question, reason? } ], reason? }   (deep only, before any retrieval)
+  event: trace    { step, tool, input, ok, ms, reason?, error?, subQuestion? }   (one per tool call)
+  event: sources  [ { n, kind: "web", title, url, snippet, subQuestion? },
+                    { n, kind: "doc", docId, title, locator: { page | heading | line }, snippet, subQuestion? } ]
   event: token    { text }                                          (many)
   event: done     { answerId, latencyMs, ttftMs, model, tokens: { in, out }, costUsd,
-                    searchCached, terminated: "done" | "cap" }
+                    searchCached, terminated: "done" | "cap",
+                    depth: "quick" | "deep", subQuestions? }
   event: error    { status: 502, error }                             (instead of done, on provider failure)
 ```
 
 Rules: `sources` arrives before the first `token`. Every `[n]` in the text has exactly one matching
 `n` in `sources`. `latencyMs`, `ttftMs`, `costUsd` are measured server-side.
+
+Deep search rules: the `plan` event is emitted before any retrieval happens; every retrieval trace
+step and every source carries the `subQuestion` index it served; the merged citation numbering is
+contiguous from 1 with each page appearing once. `depth` is opted into per request and the server
+never upgrades a quick search on its own — `plan_research` is never called from a quick run.
+Over the deep daily cap: `429 { error, resetsAt }`, refused before the stream opens.
 
 ## Memory
 
@@ -61,7 +74,9 @@ Image over the daily cap: `429 { error, resetsAt }`.
 ```
 GET /health                         -> 200 { status, model, searchProvider, vectorStore, db, ai: { status } }
 GET /stats                          -> 200 { requests, answers, searchCacheHitRatePct, ttftP95Ms,
-                                            costUsdToday, imagesToday, imageDailyCap }
+                                            costUsdToday, imagesToday, imageDailyCap,
+                                            deepToday, deepDailyCap }
+                                       deepToday is per X-User-Id, read from the same counter the cap reserves against
 GET /evals/report.json              -> 200 { assignment, student, repo, video, deployedAt, rubric, bench, quality, trajectories }
 ```
 
