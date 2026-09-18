@@ -12,6 +12,35 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-17 · Session 20: quality/check.mjs — the CONTRACT and TRAJECTORY gates
+
+**Did (still inside the 2-hour push; terse by design)**
+- Staff never shipped `quality/check.mjs` (`quality/README.md` still says "Not yet in the repo").
+  Built it per that README's own spec: reads `expectations.json` + every `runs/*.json`, asserts by
+  arithmetic only. C1 (budgets positive, eval ratios in 0..1, gold set path exists, no tool both
+  required and forbidden), then per run: A1 (a failed tool call carries a non-empty error), A2
+  (terminated is a valid value, and a run that hit the tool-call cap is never mislabeled `"done"`),
+  A3 (thrash guard — no more than `maxConsecutiveSameTool` identical calls in a row), R2 (no
+  forbidden artifact tool anywhere in `toolCalls`), B1/B2/B3 (tokens/wallClockSec/costUsd against
+  `expectations.json`'s declared budgets). Exit 0 pass / 1 warnings-only / 2 any error, matching the
+  gate contract in PRD §13.
+
+**Proved**
+- `node --check quality/check.mjs`: syntax OK.
+- Empty `runs/`: `WARN [RUN] no runs/*.json found` → exit 1 (not a false pass, not a crash).
+- Real runs: fired 3 real asks locally, `node quality/check.mjs .` → `0 error(s), 0 warning(s)`,
+  exit 0.
+- Injected a synthetic bad run (`ok:false` with an empty error, 4 consecutive `fetch_page` calls,
+  a `generate_image` call, 50,000 tokens, $0.09 cost) and confirmed every rule fires on the real
+  file: A1, A3, R2, B1, B3 all reported correctly, exit 2. Deleted the fixture immediately after —
+  it was never meant to be a real record.
+
+**Next**
+- `/evals` full trajectories (P1, manual) — still needs a deliberate `terminated: "error"` trigger.
+- UI hookup for deck/image artifact buttons.
+
+---
+
 ## 2026-09-17 · Session 19: contract status codes — 404, 413, threads routes
 
 **Did (2-hour push against the remaining rubric gaps; terse by design)**
