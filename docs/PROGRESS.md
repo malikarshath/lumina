@@ -284,13 +284,52 @@ should be stated as such rather than presented as complete.
 
 ## Deployed
 
-- **UI:** https://lumina-web-phi-ashy.vercel.app/ — Vercel, auto-deploys on push to `main`.
-- **Backend (gateway+agent, one Render service):** https://lumina-fb9s.onrender.com — agent is not
-  separately publicly reachable; the gateway proxies everything.
-- **Database:** MongoDB Atlas M0, all three search indexes live (vector, text, TTL).
-- Both confirmed live and running the latest pushed commit as of 2026-09-18 (checked `/stats`,
-  `/threads/:id` 404 behavior, and the mode-enum validation error listing `deep` — see
-  [[BUILD-LOG]] for the exact commands).
+**Submission URL:** https://lumina-web-phi-ashy.vercel.app/ (Vercel, project `lumina-web`).
+
+| Piece | Where | Public? |
+|---|---|---|
+| UI (our Next.js — a bonus per `TECHNICAL.md:343`) | Vercel `lumina-web` | yes, this is the submission |
+| UI (the provided Vite acceptance test, unmodified) | https://lumina-provided-ui.vercel.app | yes, fallback |
+| **Gateway** | https://lumina-gateway-malik.fly.dev (Fly, `sin`) | yes — the only door |
+| **Agent** | `lumina-agent-malik` (Fly, `sin`) | **NO — zero public IPs** |
+| Database | MongoDB Atlas M0 | all three search indexes live (2 vector + 1 text) + TTL |
+
+**The agent is genuinely unreachable, and that is the point.** It holds the provider keys and
+enforces `DEEP_DAILY_CAP`, and "a cap you can bypass by calling the service directly is not a cap."
+
+```
+fly ips list -a lumina-agent-malik --json   -> 0 addresses
+https://lumina-agent-malik.fly.dev/health  -> 000 (no route)
+via the gateway                            -> 200
+```
+
+The gateway reaches it over Fly's private IPv6 network at
+`http://lumina-agent-malik.internal:8000`. On Render both processes sat behind one public URL, so
+the cap was bypassable — that was an outright `deploy_docs` fail, and it is why we moved.
+
+**Render is retired.** `https://lumina-fb9s.onrender.com` still exists but holds pre-rotation
+credentials and nothing points at it. Delete the service.
+
+**Credentials were rotated on 2026-09-19** (Mongo user password, Anthropic, OpenAI, Tavily) after
+they were pasted into a chat transcript. Verified by hash-comparing each new `.env` value against
+the exposed one, then proving the new ones work rather than assuming: `/health` reports `db ok`
+(new Mongo password accepted) and a full answer streamed 89 SSE frames with grounded citations
+(Anthropic + Tavily + OpenAI embeddings all live).
+
+**Verified against the deployed Fly gateway:** `conformance.mjs` 18/18 (every route the provided UI
+calls, validated against the provided zod schemas, plus SSE payload shapes and sources-before-token)
+and `memory-check.mjs` 4/4 (save in thread A → recall in thread B → delete → gone).
+
+### Deploying it again
+
+```bash
+fly deploy -c fly.agent.toml   --depot=false
+fly deploy -c fly.gateway.toml --depot=false
+```
+
+`--depot=false` is not optional on this laptop: the Depot builder is unreachable from the corporate
+network (`connection reset by peer` to `149.248.212.172:443`), and without the flag the build hangs
+for ten minutes and then fails. Fly's own remote builder works first time.
 
 ## Phase
 
