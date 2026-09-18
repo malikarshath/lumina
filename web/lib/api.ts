@@ -36,3 +36,34 @@ export async function listDocs(spaceId: string): Promise<DocInfo[]> {
   const j = await r.json();
   return j.documents ?? [];
 }
+
+export type ArtifactStatus = {
+  status: "pending" | "ready" | "failed";
+  url?: string;
+  outline?: unknown;
+  promptUsed?: string;
+  model?: string;
+  costUsd?: number;
+  error?: string;
+};
+
+// The ask loop never calls this -- artifacts are a separate, deliberate,
+// cost-bearing action the user takes on an answer that already exists.
+export async function createArtifact(
+  kind: "deck" | "image",
+  threadId: string,
+  answerId?: string,
+  prompt?: string,
+): Promise<{ artifactId: string; kind: string; status: string } | { error: string; resetsAt?: string }> {
+  const r = await fetch(`${GATEWAY_URL}/artifacts`, {
+    method: "POST",
+    headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, threadId, answerId, prompt }),
+  });
+  return r.json();
+}
+
+export async function getArtifact(artifactId: string): Promise<ArtifactStatus> {
+  const r = await fetch(`${GATEWAY_URL}/artifacts/${artifactId}`, { headers: auth });
+  return r.json();
+}

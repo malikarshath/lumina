@@ -13,7 +13,7 @@ export type AskHandlers = {
   onTrace?: (d: { tool: string; input: unknown; ok: boolean; ms: number }) => void;
   onSources?: (sources: Source[]) => void;
   onToken?: (text: string) => void;
-  onDone?: (d: { latencyMs: number; ttftMs: number; terminated: string }) => void;
+  onDone?: (d: { answerId: string; latencyMs: number; ttftMs: number; terminated: string }) => void;
   onError?: (d: { status?: number; error: string }) => void;
 };
 

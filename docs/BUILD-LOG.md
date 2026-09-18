@@ -12,6 +12,47 @@ ran and I read its output. If nothing was proved, say so.
 
 ---
 
+## 2026-09-17 · Session 22: UI hookup — deck/image buttons (last item of the 2-hour push)
+
+**Did (item 4 of 4)**
+- `lib/api.ts`: `createArtifact(kind, threadId, answerId?, prompt?)` and `getArtifact(artifactId)`.
+- `lib/askStream.ts`: widened `onDone`'s type to expose `answerId` (it was already on the wire, just
+  not typed through).
+- `app/page.tsx`: capture `answerId` from `onDone`; two buttons ("📊 Make a deck", "🎨 Generate
+  image") appear once an answer exists; `makeArtifact(kind)` does 202 → poll `GET /artifacts/:id`
+  (same pattern as the existing document-upload polling) → renders a download link for a deck or an
+  inline `<img>` for an image, or the real error if generation failed.
+
+**Proved**
+- `npx tsc --noEmit` and `next build` both clean; grepped the built bundle and confirmed
+  `createArtifact`/`getArtifact`/the button labels actually compiled in, byte for byte matching the
+  source.
+- Replicated the exact click flow with a script hitting the real gateway (ask → capture `answerId`
+  from `done` → `POST /artifacts` → poll): **found and fixed a real bug this exposed** — the UI has
+  hardcoded `threadId: "t1"` since an earlier session, which never matches the contract's `ThreadId`
+  regex (`^thr_`). `POST /threads/:id/ask` never validates its URL param, so asking silently worked
+  for sessions; `POST /artifacts` does validate `threadId` in its body, and correctly 400'd. Fixed by
+  introducing a `THREAD_ID = "thr_web01"` constant and using it in both call sites. Re-ran the same
+  script after the fix: `202 → pending ×7 → ready`, real downloadable `.pptx` URL.
+- Still no browser tool available this session to click the buttons visually — verified through the
+  compiled bundle plus a script that performs the identical HTTP sequence the buttons trigger. A real
+  click-through in a browser is still owed before calling this fully done.
+
+**Rubric status after this 2-hour push (items done this session, in order): contract status codes
+(threads routes, 404, 413) → quality/check.mjs → /evals trajectories → this UI hookup.** Automated
+points closed across today: Search & cited answers (20), Memory (10), Presentation auto (5), Image
+generation (10), RAG over documents (15), Observability (5) = 65/80, plus contract status codes and
+half of performance_sla (check.mjs; bench.mjs's own SLA numbers still show the known, explained
+grounding-vs-latency trade-off failing TTFT/answer-latency targets).
+
+**Next**
+- A real browser click-through of both the deck/image buttons and the new /evals Trajectories
+  section, once a browser tool is available.
+- `web/app/page.tsx`'s single fixed `THREAD_ID` means every visitor currently shares one thread —
+  fine for a solo demo, worth a real per-session id if this becomes multi-user.
+
+---
+
 ## 2026-09-17 · Session 21: /evals trajectories — one real success, one real failure
 
 **Did (2-hour push, item 3 of 4)**

@@ -2,9 +2,25 @@
 
 import { useEffect, useRef, useState } from "react";
 import { askStream, type Source } from "@/lib/askStream";
-import { GATEWAY_URL, USER_ID, createSpace, uploadDoc, listDocs, type DocInfo } from "@/lib/api";
+import {
+  GATEWAY_URL,
+  USER_ID,
+  createSpace,
+  uploadDoc,
+  listDocs,
+  createArtifact,
+  getArtifact,
+  type DocInfo,
+} from "@/lib/api";
 
 type Mode = "auto" | "web" | "docs";
+type ArtifactUi = { kind: "deck" | "image"; status: "pending" | "ready" | "failed"; url?: string; error?: string };
+
+// One fixed thread for this single-thread UI. Must match the contract's
+// ThreadId shape (thr_...) -- POST /threads/:id/ask never validated its URL
+// param, so a plain "t1" silently worked for asking but broke the moment
+// POST /artifacts (which does validate threadId) tried to use the same id.
+const THREAD_ID = "thr_web01";
 
 export default function Home() {
   const [query, setQuery] = useState("");
@@ -18,6 +34,9 @@ export default function Home() {
   const [spaceId, setSpaceId] = useState<string | null>(null);
   const [docs, setDocs] = useState<DocInfo[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const [answerId, setAnswerId] = useState<string | null>(null);
+  const [artifact, setArtifact] = useState<ArtifactUi | null>(null);
 
   // Restore the space from localStorage; refresh its document list.
   useEffect(() => {
@@ -59,18 +78,49 @@ export default function Home() {
     setSources([]);
     setTrace([]);
     setError(null);
+    setAnswerId(null);
+    setArtifact(null);
 
     const sid = mode === "web" ? undefined : spaceId ?? undefined;
-    await askStream(GATEWAY_URL, "t1", query, mode, USER_ID, {
+    await askStream(GATEWAY_URL, THREAD_ID, query, mode, USER_ID, {
       onTrace: (d) => setTrace((t) => [...t, { tool: d.tool, ok: d.ok, ms: d.ms }]),
       onSources: (s) => setSources(s),
       onToken: (text) => setAnswer((a) => a + text),
-      onDone: () => setLoading(false),
+      onDone: (d) => {
+        setLoading(false);
+        setAnswerId(d.answerId);
+      },
       onError: (d) => {
         setError(d.error ?? "Something went wrong");
         setLoading(false);
       },
     }, sid);
+  }
+
+  // Deck/image generation: a separate, deliberate, cost-bearing action on an
+  // answer that already exists -- never something the ask loop spends on
+  // itself. 202 -> poll -> ready/failed, same pattern as document upload.
+  async function makeArtifact(kind: "deck" | "image") {
+    if (!answerId) return;
+    setArtifact({ kind, status: "pending" });
+    const created = await createArtifact(kind, THREAD_ID, answerId);
+    if ("error" in created) {
+      setArtifact({ kind, status: "failed", error: created.error });
+      return;
+    }
+    for (let i = 0; i < 30; i++) {
+      const a = await getArtifact(created.artifactId);
+      if (a.status === "ready") {
+        setArtifact({ kind, status: "ready", url: `${GATEWAY_URL}${a.url}` });
+        return;
+      }
+      if (a.status === "failed") {
+        setArtifact({ kind, status: "failed", error: a.error ?? "generation failed" });
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    setArtifact({ kind, status: "failed", error: "timed out waiting for the artifact" });
   }
 
   const modes: Mode[] = ["auto", "web", "docs"];
@@ -149,7 +199,46 @@ export default function Home() {
         <div className="mb-4 rounded-lg border border-red-800 bg-red-950 p-3 text-red-200">{error}</div>
       )}
 
-      {answer && <div className="mb-8 whitespace-pre-wrap leading-relaxed">{answer}</div>}
+      {answer && <div className="mb-4 whitespace-pre-wrap leading-relaxed">{answer}</div>}
+
+      {answerId && !loading && (
+        <div className="mb-4 flex gap-2">
+          <button
+            onClick={() => makeArtifact("deck")}
+            disabled={artifact?.status === "pending"}
+            className="rounded-md bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-50"
+          >
+            📊 Make a deck
+          </button>
+          <button
+            onClick={() => makeArtifact("image")}
+            disabled={artifact?.status === "pending"}
+            className="rounded-md bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-50"
+          >
+            🎨 Generate image
+          </button>
+        </div>
+      )}
+
+      {artifact && (
+        <div className="mb-8 rounded-lg border border-neutral-800 p-3 text-sm">
+          {artifact.status === "pending" && (
+            <span className="text-neutral-400">Generating your {artifact.kind}…</span>
+          )}
+          {artifact.status === "failed" && (
+            <span className="text-red-400">Failed: {artifact.error}</span>
+          )}
+          {artifact.status === "ready" && artifact.kind === "deck" && (
+            <a href={artifact.url} className="text-blue-400 hover:underline">
+              ⬇️ Download deck (.pptx)
+            </a>
+          )}
+          {artifact.status === "ready" && artifact.kind === "image" && artifact.url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={artifact.url} alt="Generated illustration" className="max-w-xs rounded-md" />
+          )}
+        </div>
+      )}
 
       {sources.length > 0 && (
         <section>
