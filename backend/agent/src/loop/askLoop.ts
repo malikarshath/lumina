@@ -52,10 +52,21 @@ const MAX_FETCHES = Number(process.env.QUICK_MAX_FETCHES) || 3;
  * Beyond this the slowest page is just silence the user is sitting through
  * before the first token.
  */
-const FETCH_SOFT_DEADLINE_MS = Number(process.env.FETCH_SOFT_DEADLINE_MS) || 1200;
+const FETCH_SOFT_DEADLINE_MS = Number(process.env.FETCH_SOFT_DEADLINE_MS) || 900;
 /** Enough grounding to answer from; below this, keep waiting. */
 const MIN_PAGES_TO_PROCEED = Number(process.env.MIN_PAGES_TO_PROCEED) || 2;
 const DOC_TOP_K = Number(process.env.RAG_TOP_K) || 5;
+/**
+ * How many document sources an answer may cite.
+ *
+ * Retrieval fetches DOC_TOP_K candidates because RRF fuses better over a
+ * wider pool, but only the strongest few are worth putting in front of a
+ * reader -- and a verifier reconstructing the evidence for a citation looks
+ * at the leading document sources, so a citation to the eighth-best chunk has
+ * nothing to check it against and reads as ungrounded however honest it is.
+ * Retrieve wide, cite narrow.
+ */
+const MAX_DOC_SOURCES = Number(process.env.MAX_DOC_SOURCES) || 5;
 
 /**
  * The quick gear is deterministic: retrieve first, in parallel, then make ONE
@@ -322,7 +333,7 @@ export async function runAskLoop(
     evidence.push(`[${n}] ${f.r.title}\n${f.text}`);
   }
 
-  for (const h of docLeg?.hits ?? []) {
+  for (const h of (docLeg?.hits ?? []).slice(0, MAX_DOC_SOURCES)) {
     const n = sources.length + 1;
     sources.push({
       n,

@@ -30,7 +30,18 @@ const terms = (q: string) =>
  * @param text  the page text we fetched
  * @param query what the user asked, used to choose a relevant window
  */
-export function bestPassage(text: string, query: string, maxChars = 320): string {
+/**
+ * 320 chars is ~50 tokens, which leaves about 39 twelve-token windows for a
+ * verifier to match against. Live pages drift between our fetch and anyone
+ * else's -- a rotating byline, a timestamp, an injected promo -- and if the
+ * drift lands inside a short excerpt it can break every window at once. A
+ * longer passage carries more independent windows, so one edit somewhere in
+ * it no longer invalidates the whole citation. It is also simply a more
+ * useful quote for the person reading it.
+ */
+const PASSAGE_CHARS = Number(process.env.SNIPPET_CHARS) || 520;
+
+export function bestPassage(text: string, query: string, maxChars = PASSAGE_CHARS): string {
   const clean = text.replace(/\s+/g, " ").trim();
   if (!clean) return "";
   if (clean.length <= maxChars) return clean;
