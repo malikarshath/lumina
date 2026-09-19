@@ -12,6 +12,63 @@ Hub note. Related: [[DESIGN]] · [[DECISIONS]] · [[API]] · [[ATLAS-SETUP]] · 
 > Keep this honest. A box is checked only when the verify command passed, not when the code
 > looks right. Inspection is not verification.
 
+## TL;DR — current state (2026-09-19)
+
+**Submitted and live: 82/85 automated, 15 manual points left to a grader.**
+[/evals](https://lumina-web-phi-ashy.vercel.app/evals) renders it, video embedded.
+
+| Area | Score |
+|---|---|
+| UI lights up & contract | **10/10** |
+| Search & cited answers | **20/20** |
+| Memory (thread + long-term) | **10/10** |
+| RAG over documents | **15/15** |
+| Deep search | **15/15** |
+| Logging, tracing & stats | **5/5** |
+| Performance & SLA gate | 7/10 — `ttft p95 2677ms` vs 2500 |
+
+Measured on the provided benchmark against the deployed gateway, from a harness in the same
+region: **citation grounding 1.00 (139/139, zero dangling)**, error rate 0, `202` accept 179ms,
+deep plan 2807ms, answer p95 7347ms, recall@5 0.867, cache 100%, $0.0101/quick, $0.0885/deep.
+`quality/check.mjs`: **0 errors over 662 run logs**.
+
+**The one remaining miss** is time-to-first-token, 177ms over. What is left is one search, the
+slowest of three parallel page fetches, and the answer model's own time to first byte. The only
+real lever is moving answers from Sonnet to Haiku, which trades against the two human-graded
+quality rows — deliberately not taken.
+
+### What this session actually taught us
+
+Three of the five SLA failures were never code problems, and finding that out took longer than
+fixing them:
+
+1. **The compute was on the wrong continent.** Atlas lives in AWS `us-west-2` and Anthropic,
+   OpenAI and Tavily are US-hosted, but the apps were in Singapore. One Mongo round trip measured
+   **188ms from `sin` and 23ms from `sjc`**. Every database call, every model call and every
+   search paid a trans-Pacific hop.
+2. **The harness was in the wrong country.** `202 accept` and `ttft` are measured *by the client*,
+   so running the bench from a laptop in India measured the Pacific as much as the system. The
+   identical upload: **1182ms from the laptop, 179ms from a throwaway Fly machine in `sjc`**. That
+   is not localhost — real DNS, real TLS, the real public gateway. It only removes the tester's
+   distance. See `Dockerfile.bench` / `fly.bench.toml`.
+3. **Grounding was a contract detail, not a quality problem.** Three runs failed on *exactly eight*
+   citations — too stable to be page drift. A verifier rebuilds the evidence for a document
+   citation from the **leading** document sources, and we published `RAG_TOP_K=8` of them, so a
+   citation to the sixth-best chunk had nothing to check it against. Retrieval still fetches eight
+   (RRF fuses better over a wider pool); only five are published. **0.944 → 1.00.**
+
+Two wrong hypotheses are recorded so nobody re-tries them: numeric HTML entities leaking a phantom
+`8217` token into snippets (a real bug, fixed, but not this one), and lengthening snippets to
+survive page drift (no effect). What settled it was reproducing the verifier's own check over the
+full web workload and getting **30/30** — which proved the failures were not in web citations at
+all and pointed at the document path.
+
+**A billing outage nearly published a false report.** Mid-session the Anthropic credit balance
+ran out. `extractMemory` swallowed the 400 and returned `null`, so memory silently stopped saving
+and the rebuilt report scored Memory 0/10 — not because memory was broken, but because a
+dependency was down. That report was not published. It is the same swallowed-error pattern rule A1
+exists to prevent, written by us, in code added this week.
+
 ## TL;DR for whoever picks this up next
 
 LUMINA is built, deployed, and working end to end. On 2026-09-18 course staff shipped the official
@@ -350,29 +407,30 @@ for ten minutes and then fails. Fly's own remote builder works first time.
 | Bench green, gates pass | partial — TTFT/answer p95 still fail (real, explained trade-off: honest grounding requires search+fetch before the first token) |
 | Deploy + submit Vercel URL | done |
 
-## Rubric tracker — CURRENT (100 pts, per the 2026-09-18 official `eval/rubric.json`)
+## Rubric tracker — SCORED (2026-09-19, `reports/report.json`, live on /evals)
 
-Points are claimed only with evidence. "Evidence" means a command output, a run log, or a
-screenshot, not an opinion. This table replaces the deck/image rows with Deep Search.
+Every row below is the score `eval/build-report.mjs` computed from one full benchmark run against
+the deployed gateway. Nothing here is an opinion or a claim; re-run the bench and it regenerates.
 
-| # | Area | Pts | Type | State | Evidence |
-|---|---|---|---|---|---|
-| 1 | UI lights up & contract | 10 | auto | mostly done | 400/401/404/413/429/502 all proven via curl ([[BUILD-LOG]] Session 19). No genuine "not implemented" route left to prove a real `501` against. |
-| 2 | Search & cited answers | 20 | auto | **done** | `fetch_page` grounding + two-tier cache, real curl proof ([[BUILD-LOG]] Session 15). |
-| 3 | Memory, thread + long-term | 10 | auto | **done** | `save_memory`/`recall_memory`, `GET`/`DELETE /memory` ([[BUILD-LOG]] Session 14). |
-| 4 | RAG over documents | 15 | auto | **done** | recall@5 = 0.933–0.967 across two real runs vs. 0.70 target, 35-item gold set ([[BUILD-LOG]] Session 17). |
-| 5 | Deep search (automated) | 15 | auto | **done, contract-matched** | `plan_research` → per-sub-question search+fetch units in parallel → merged deduped numbering → synthesis. All 11 official bench assertions re-implemented and passing on a real captured stream: 5 sub-questions planned before any retrieval, 20/20 retrieval steps and 15/15 sources tagged with `subQuestion`, contiguous numbering, 0 dangling citations, $0.119 of $0.35, 21 of 24 tool calls, 39.5 s of 90 s, 5.00x quick source ratio, and a real `429 {error, resetsAt}` at the cap ([[BUILD-LOG]] Session 26). |
-| 6 | Performance & SLA | 10 | auto | partial | `quality/check.mjs` built and proven (Session 20). `bench.mjs` itself: cost/error/cache/recall all PASS, **TTFT p95 9,567ms and answer p95 17,762ms both still FAIL** the 2,500ms/12,000ms targets (real numbers, Session 23 — down from 26,821ms/36,542ms after parallelizing tool execution, but grounding-before-token is an architectural floor). |
-| 7 | Observability | 5 | auto | **done** | Same `X-Request-Id` in both services' logs, `/stats.costUsdToday` matched the log line exactly, real tool failure logged with non-empty error ([[BUILD-LOG]] Session 18). |
-| 8 | Deep search quality (manual) | 5 | manual | not started | Needs a human (Malik) to ask the same question at both depths and judge whether deep is *better*, not just longer. |
-| 9 | Human gate & answer quality | 5 | manual | infrastructure done, read-through not done | `/evals` renders one real successful and one real failing trajectory in full ([[BUILD-LOG]] Session 21) — the failing one is a genuine captured `terminated: "error"`, not staged. Malik still needs to personally read both and write up what each taught him (P1 is explicitly a learner action, not something I can do for him). |
-| 10 | Deploy & docs | 5 | manual | mostly done | Live on Vercel + Render + Atlas, confirmed today. Rubric literally says "Fly.io or Vercel" for services — we're on Render, which isn't in that list; pre-existing decision, flagged, not re-litigated. `/evals` serves `/report.json`, not the literally-declared `GET /evals/report.json` path — small contract-fidelity gap. |
+| # | Area | Pts | Awarded | Evidence |
+|---|---|---|---|---|
+| 1 | UI lights up & contract | 10 | **10** | All four contract probes pass, incl. `GET /evals/report.json` not 401. `sources` precedes the first token on every answer. `/health` names model, provider, vector store. |
+| 2 | Search & cited answers | 20 | **20** | **Citation grounding 1.00 — 139/139 verifiable, 0 dangling.** Retrieval rate 1.0, cache hit rate 100% on a 50%-repeat workload. |
+| 3 | Memory (thread + long-term) | 10 | **10** | Preference saved in thread A, `recall_memory` in a new thread, `DELETE` removes it. Verified independently by `memory-check.mjs` 4/4. |
+| 4 | RAG over documents | 15 | **15** | `202` accept p95 **179ms**, all corpus files reach `indexed` via the worker, PDF citations carry `p. N`, `mode=auto` routes to documents, recall@5 0.867. |
+| 5 | Deep search | 15 | **15** | Plan before any retrieval, 4–5 sub-questions, every step and source tagged, contiguous merged numbering, **4.5× quick's distinct sources**, $0.0885 of $0.35, cap+1 → `429 {resetsAt}`, no quick run touches `plan_research`. |
+| 6 | Performance & SLA | 10 | 7 | One target missed: `ttft p95 2677ms` vs 2500. Everything else passes, and `quality/check.mjs` reports **0 errors over 662 run logs**. |
+| 7 | Logging, tracing & stats | 5 | **5** | One `X-Request-Id` across both services' logs, `/stats` reconciles, every failed tool call carries a non-empty error (A1). |
+| 8 | Deep search quality | 5 | — | **Malik.** Ask one question at both depths, read both, judge whether deep is genuinely *better*. |
+| 9 | Human gate & answer quality | 5 | — | **Malik.** Both trajectories render in full on `/evals` (21 steps successful, 6 failing). He still has to read them and write what each taught him — P1 is explicitly a learner action. |
+| 10 | Deploy & docs | 5 | — | Grader-judged. Evidence is live: UI on Vercel, gateway public on Fly, **agent private with zero public IPs**, Atlas, video embedded on `/evals`. |
 
-**Removed from scoring (still built and working, just not graded):** Presentation auto (5) +
-Presentation manual (5) + Image generation (10) = 20 pts, swapped 1:1 for Deep Search's 20.
+**Automated: 82/85. Manual: 15 outstanding.**
 
-Bonus available: +5 new rule with precedent, +5 subagents-in-parallel for deep search (we already do
-concurrent fetch/search, but not via isolated subagents specifically), +5 semantic answer cache.
+Bonus available: **+5 new rule with precedent** — written up in [[BONUS-RULE]] (rule D1: a deploy
+config is proven by deploying it; the provided `web/vercel.json` cannot be deployed because Vercel
+rejects its `_comment` key). Also +5 subagents-in-parallel for deep search, +5 semantic answer
+cache.
 
 ## The six gates
 
@@ -383,32 +441,39 @@ concurrent fetch/search, but not via isolated subagents specifically), +5 semant
 - [ ] **Gate 4 EVAL** — grounding/recall/retrieval-rate/error-rate all pass; TTFT/answer-latency percentiles do not.
 - [ ] **Gate 5 HUMAN** — the trajectories exist and render; the personal read-through + write-up hasn't happened yet.
 
-## SLA targets — actuals from the most recent real run (2026-09-17, `reports/report.json`)
+## SLA targets — the final run (2026-09-19, in-region harness, deployed gateway)
 
-| Metric | Target | Actual | Result |
+| Metric | Target | Measured | |
 |---|---|---|---|
-| TTFT p95 | <= 2500 ms | 9,567 ms | FAIL (down from 26,821ms before parallelizing tool execution) |
-| Full answer p95 | <= 12000 ms | 17,762 ms | FAIL (down from 36,542ms) |
-| 202 accept p95 | <= 300 ms | not separately measured | — |
-| Citation grounding | >= 95 % | not separately measured as its own metric (E2 grounding is asserted structurally, not sampled) | — |
-| RAG recall@5 | >= 0.70 | 0.933 | PASS |
-| Search cache hit rate | >= 50 % | 83.3 % | PASS |
-| Error rate | <= 1 % | 0 % | PASS |
-| Cost per answer (max in sample) | <= $0.05 | $0.047 | PASS |
-| Deep search source ratio | >= 2.0x quick | 5.00x (15 deep vs 3 quick, same question) | PASS |
-| Deep search cost | <= $0.35 | $0.119 | PASS |
-| Deep search p95 | <= 90 s | 39.5 s | PASS (one data point) |
-| Deep sub-questions | >= 3 | 5 | PASS |
-| Deep plan first paint | <= 4000 ms | not separately measured (plan is emitted before the first trace step; the bench times it) | — |
-| Deep tool calls | <= 24 | 21 | PASS |
-| Cost per QUICK answer | <= $0.05 | $0.0745 on a hard multi-part question | **FAIL — see blockers** |
+| citation grounding | ≥ 0.95 | **1.00** (139/139, 0 dangling) | ✓ |
+| error rate | ≤ 1% | **0** | ✓ |
+| `202` accept p95 | ≤ 300ms | **179ms** | ✓ |
+| deep plan p95 | ≤ 4000ms | **2807ms** | ✓ |
+| deep answer p95 | ≤ 90s | **31.5s** | ✓ |
+| deep/quick source ratio | ≥ 2× | **4.5×** | ✓ |
+| cost per deep answer | ≤ $0.35 | **$0.0885** | ✓ |
+| cost per quick answer | ≤ $0.05 | **$0.0101** | ✓ |
+| answer p95 | ≤ 12000ms | **7347ms** | ✓ |
+| recall@5 | ≥ 0.70 | **0.867** | ✓ |
+| search cache hit rate | ≥ 50% | **100%** | ✓ |
+| search p95 during ingest | ≤ 1.3× idle | **0.842×** | ✓ |
+| sources before first token | required | **yes** | ✓ |
+| dangling citations | 0 | **0** | ✓ |
+| **ttft p95** | **≤ 2500ms** | **2677ms** | **✗** |
 
-The TTFT/latency floor is a deliberate, explained trade-off, not an oversight: the contract requires
-`sources` before the first token, so a real search + real page fetch(es) must complete before an
-honest answer can start streaming. Already tried and rejected: front-loading a search before the
-model's first turn (broke "the agent decides when to search," reverted in an earlier session).
-Already tried and kept: `effort: "low"` and parallelizing tool execution within a turn (the biggest
-real win so far, ~2-2.8x).
+**Where the numbers are measured from matters, and is declared on `/evals`.** The harness runs on
+a throwaway Fly machine in `sjc` (`Dockerfile.bench`, `fly.bench.toml`) — still the public
+internet, real DNS, real TLS, through the real public gateway. It is not localhost. The same
+upload measured **1182ms from a laptop in India and 179ms from `sjc`**: `202 accept` and `ttft`
+are client-side measurements, so a distant harness measures the distance, not the system.
+
+Reproduce:
+
+```bash
+fly deploy -c fly.bench.toml --depot=false
+fly ssh console -a lumina-bench-malik -C "node benchmark/bench.mjs --target https://lumina-gateway-malik.fly.dev"
+fly apps destroy lumina-bench-malik --yes
+```
 
 ## Red lines
 
@@ -425,18 +490,22 @@ real win so far, ~2-2.8x).
 
 | Blocker | Since | Owner | Note |
 |---|---|---|---|
-| **Quick answers can exceed `max_cost_per_answer_usd` ($0.05) on hard questions** | 2026-09-18 | Malik (trade-off call) | Measured $0.0745 on the multi-part deep-baseline question. This newly matters because the official bench runs each deep question through **quick first** as its baseline and holds that quick run to $0.05 (`quickBudget`). The cause is not the new code — it is that each turn resends every previous tool result, so three 6,000-char pages get re-billed on every subsequent turn (~13.5k input tokens). Options: trim `fetchPage`'s `maxChars` for the quick loop, summarise older tool results before resending, or cap quick at two fetches. Each trades grounding depth for cost, which is a DESIGN.md trade-off and deliberately left for Malik rather than silently chosen. |
-| Deployed Render service has no `DEEP_DAILY_CAP` / `DEEP_*` env vars | 2026-09-18 | Malik | Code defaults (cap 5, 3–5 sub-questions, 3 results each, 24/240 s) apply without them, so deep search works in prod as-is. Set them explicitly anyway so the deployed cap is declared rather than implied — same operational gap pattern as the Atlas/OpenAI keys earlier. |
-| Manual grading items require Malik's own action (P1 is explicitly a learner action) | ongoing | Malik | Deep-search-quality judgment (5 pts) and the trajectory read-through write-up (part of 5 pts) can't be done by the tutor on his behalf. |
-| No browser tool available this session | ongoing | environment | UI changes (Trace/Sources sidebar, deep mode button, markdown rendering) verified via build output, bundle contents, and real API data — never visually clicked through. |
+| **`ttft p95` 2677ms vs 2500ms** | open | Malik (trade-off call) | The last failing SLA row, 177ms over. What remains is one search, the slowest of three parallel fetches, and the answer model's own time to first byte — the region move and the fetch deadline already took it from 5650ms. The only substantial lever left is moving answers from `claude-sonnet-5` to `claude-haiku-4-5`, which would likely clear it and would trade against the two human-graded quality rows. Deliberately not taken: it is a DESIGN.md decision, not a tuning knob. |
+| **Manual rubric rows (15 pts)** | ongoing | Malik | Deep-search quality judgement (5) and the trajectory read-through write-up (5) are explicitly learner actions. Deploy & docs (5) is grader-judged and its evidence is already live. |
+| `extractMemory` swallows provider errors | 2026-09-19 | open | `catch { return null; }` turned a billing 400 into "nothing worth remembering", so memory silently stopped saving. It should stay non-fatal — memory is an enhancement — but it must log loudly. Same swallowed-error pattern rule A1 exists to prevent, in code we wrote this week. |
+| No browser tool available | ongoing | environment | UI verified via bundle contents, HTTP status and real API data — never visually clicked through. The Loom embed on `/evals` in particular is unverified visually. |
 
 **Resolved**
 
 | Was blocking | Resolved | Outcome |
 |---|---|---|
-| Deep search didn't match the newly-shipped official contract | 2026-09-18 | Closed and measured, 11/11 official deep assertions passing on a real run. Two gaps the original list had missed turned out to be the actual blockers: the gear is `depth`, not `mode` (our deep path was unreachable from the official bench), and `expectations.json` still held the quick budget envelope (every deep run failed Gate 1). See TL;DR and [[BUILD-LOG]] Session 26. |
-| Database: Supabase vs. MongoDB | 2026-09-06 | MongoDB confirmed by Malik. See [[DECISIONS]] D4. |
-| Staff scaffold not shipped | 2026-09-18 | Shipped, at the sibling `Assignment_1_Lumina/` path — but scope changed (deck/image → deep search) as a result. See TL;DR. |
+| Citation grounding stuck at 0.944–0.973 | 2026-09-19 | **1.00, 139/139.** A verifier rebuilds a document citation's evidence from the *leading* doc sources; we published `RAG_TOP_K=8`, so a citation to the sixth-best chunk had nothing to check against. Retrieve eight, publish five. |
+| `202 accept` 1182ms, `deep plan` 8156ms, `ttft` 5650ms | 2026-09-19 | 179ms / 2807ms / 2677ms. Three causes: compute in Singapore while Atlas and every provider are US-hosted (Mongo RTT **188ms → 23ms** after moving to `sjc`); the harness measuring from India; and the planner running on the answer model with no `effort` hint and a verbose prompt. |
+| Error rate 3.7% | 2026-09-19 | **0.** Planner JSON truncation (bigger budget, salvage, terse retry) and 502-ing when publishers merely blocked us (`PageDeclined` now distinguishes "the web declined" from "our fetcher is broken"). |
+| Agent publicly reachable — deep cap bypassable | 2026-09-19 | Moved to Fly with **zero public IPs** on the agent; the gateway reaches it over private 6PN. Verified: `fly ips list` returns nothing and the hostname is unroutable. |
+| `GET /evals/report.json` 404 in production | 2026-09-19 | Hygiene git-ignores `reports/`, the evidence rule needs the deployed gateway to serve it. Resolved by publishing the report to Mongo (`publish-report.mjs`, which refuses a localhost-measured report) and having the route read disk first, then the database. |
+| Quick answers over $0.05 | 2026-09-19 | **$0.0101.** Fixed by the deterministic quick loop: retrieval runs once in parallel instead of tool results being re-sent on every turn. |
+| Deep search didn't match the shipped official contract | 2026-09-18 | Closed. The gear is `depth`, not `mode`, and `expectations.json` held the quick envelope. |
+| We had hand-written our own `packages/contract`, `benchmark`, `eval`, `quality`, `scripts` | 2026-09-18 | Replaced with the provided folders, byte-identical. The hand-rolled `SourcesEvent` wrapped its array in an object; the grader reads the payload as the array, so grounding, recall, the source ratio and page locators would all have scored zero while the app looked perfect. |
+| Database: Supabase vs. MongoDB | 2026-09-06 | MongoDB confirmed. See [[DECISIONS]] D4. |
 | Search provider unconfirmed | resolved early | Tavily, see [[DECISIONS]] D3. |
-| Atlas cluster not yet created | resolved early | M0 free tier, 3 search indexes, all in use. |
-| TTFT far over target (26.8s) | 2026-09-17 | Parallelized tool execution within a turn (Promise.all, split I/O from shared-state mutation to avoid a citation-index race) — real 2-2.8x improvement to 9.6s. Still over target; architectural floor, not further reducible without reopening the grounding-vs-latency trade-off. |
