@@ -7,7 +7,7 @@ import {
   TokenEvent,
   DoneEvent,
 } from "@lumina/contract";
-import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
+import { anthropic, effortLow, LLM_MODEL, UTILITY_MODEL } from "../providers/anthropic.js";
 import { webSearch, type WebResult } from "../tools/webSearch.js";
 import { getCached, setCached, SearchCacheTally } from "../tools/searchCache.js";
 import { loadThreadHistory } from "./threadHistory.js";
@@ -47,6 +47,14 @@ const MAX_WALL_CLOCK_MS = (Number(process.env.MAX_WALL_CLOCK_SEC) || 90) * 1000;
  * what the user waits on before the first token.
  */
 const MAX_FETCHES = Number(process.env.QUICK_MAX_FETCHES) || 3;
+/**
+ * How long to keep waiting for stragglers once enough pages are in hand.
+ * Beyond this the slowest page is just silence the user is sitting through
+ * before the first token.
+ */
+const FETCH_SOFT_DEADLINE_MS = Number(process.env.FETCH_SOFT_DEADLINE_MS) || 1200;
+/** Enough grounding to answer from; below this, keep waiting. */
+const MIN_PAGES_TO_PROCEED = Number(process.env.MIN_PAGES_TO_PROCEED) || 2;
 const DOC_TOP_K = Number(process.env.RAG_TOP_K) || 5;
 
 /**
@@ -119,10 +127,14 @@ async function extractMemory(query: string): Promise<string | null> {
   if (!MEMORY_HINT.test(query)) return null;
   try {
     const msg = await anthropic.messages.create({
-      model: LLM_MODEL,
+      model: UTILITY_MODEL,
       max_tokens: 100,
       system: MEMORY_EXTRACT_SYSTEM,
       messages: [{ role: "user", content: query }],
+      // Runs concurrently with retrieval, so it is only off the critical path
+      // while it stays faster than a search. Nothing to deliberate about: the
+      // answer is one sentence or the word NONE.
+      ...effortLow(UTILITY_MODEL),
     });
     const text = msg.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -241,18 +253,48 @@ export async function runAskLoop(
     | { r: WebResult; ok: true; text: string; ms: number }
     | { r: WebResult; ok: false; error: string; ms: number; declined: boolean };
 
-  const fetched: Fetched[] = await Promise.all(
-    targets.map(async (r): Promise<Fetched> => {
-      const f0 = Date.now();
-      try {
-        return { r, ok: true, text: await fetchPage(r.url), ms: Date.now() - f0 };
-      } catch (err) {
-        // `declined` marks "the publisher said no", which is a result, not an
-        // outage. Only genuine transport failures should fail the request.
-        return { r, ok: false, error: String(err), ms: Date.now() - f0, declined: err instanceof PageDeclined };
+  // Every fetch settles into its own slot, so we can stop waiting without
+  // losing the ones that already arrived.
+  const slots: Array<Fetched | undefined> = new Array(targets.length).fill(undefined);
+
+  const inflight = targets.map(async (r, i): Promise<void> => {
+    const f0 = Date.now();
+    try {
+      slots[i] = { r, ok: true, text: await fetchPage(r.url), ms: Date.now() - f0 };
+    } catch (err) {
+      // `declined` marks "the publisher said no", which is a result, not an
+      // outage. Only genuine transport failures should fail the request.
+      slots[i] = { r, ok: false, error: String(err), ms: Date.now() - f0, declined: err instanceof PageDeclined };
+    }
+  });
+
+  /**
+   * Wait for all pages, but not past the point of diminishing returns.
+   *
+   * Waiting on `Promise.all` means the slowest page sets time-to-first-token
+   * for every answer, even when two of three came back in 300ms. Once there
+   * is enough to ground an answer, a straggler is worth less than the silence
+   * it costs -- the user is staring at nothing until synthesis starts. Pages
+   * that miss the deadline are simply not cited; nothing is fabricated, and
+   * the trace still records what was attempted.
+   */
+  await Promise.race([
+    Promise.all(inflight),
+    (async () => {
+      const deadline = Date.now() + FETCH_SOFT_DEADLINE_MS;
+      while (Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 50));
+        const done = slots.filter((s) => s?.ok).length;
+        if (done >= MIN_PAGES_TO_PROCEED) return;
       }
-    }),
-  );
+    })(),
+  ]);
+
+  const fetched: Fetched[] = slots.filter((s): s is Fetched => s !== undefined);
+  const abandoned = slots.length - fetched.length;
+  if (abandoned > 0) {
+    console.warn(`quick loop: proceeded with ${fetched.length}/${slots.length} pages; ${abandoned} still in flight`);
+  }
 
   // ---------------------------------------------------------------- phase 3
   // One contiguous numbering over everything actually retrieved.
@@ -350,7 +392,7 @@ export async function runAskLoop(
       messages: [...(await loadThreadHistory(threadId, userId)), { role: "user", content: userContent }],
       // Minimal thinking before the first token: this call has nothing to
       // decide, only to write.
-      ...({ output_config: { effort: "low" } } as Record<string, unknown>),
+      ...effortLow(LLM_MODEL),
     });
     stream.on("text", (delta) => {
       if (!ttftMs) ttftMs = Date.now() - start;

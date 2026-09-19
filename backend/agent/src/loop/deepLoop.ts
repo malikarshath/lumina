@@ -9,7 +9,7 @@ import {
   TokenEvent,
   DoneEvent,
 } from "@lumina/contract";
-import { anthropic, LLM_MODEL } from "../providers/anthropic.js";
+import { anthropic, effortLow, LLM_MODEL, UTILITY_MODEL } from "../providers/anthropic.js";
 import { webSearch } from "../tools/webSearch.js";
 import { getCached, setCached, SearchCacheTally } from "../tools/searchCache.js";
 import { loadThreadHistory } from "./threadHistory.js";
@@ -31,10 +31,16 @@ const DEEP_RESULTS_PER_SUBQ = Number(process.env.DEEP_RESULTS_PER_SUBQ) || 3;
 const DEEP_MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS_DEEP) || 24;
 const DEEP_MAX_WALL_CLOCK_MS = (Number(process.env.MAX_WALL_CLOCK_SEC_DEEP) || 240) * 1000;
 
+// The plan is deep search's first paint: the user sees nothing until it
+// lands, so every token it writes is silence they sit through. Reasons are
+// capped at a clause rather than a sentence -- long enough to justify the
+// sub-question to a reader, short enough not to cost seconds. Generation time
+// tracks output length, and this is the difference between ~6s and ~3s.
 const PLAN_SYSTEM = `Break the user's question into ${DEEP_SUB_QUESTIONS_MIN}-${DEEP_SUB_QUESTIONS_MAX}
 focused, independently-researchable sub-questions that together cover it well. Each needs a
-one-line reason explaining why answering it is necessary to answer the original question.
-Never fewer than ${DEEP_SUB_QUESTIONS_MIN}. Output ONLY valid JSON (no markdown fences) matching
+reason explaining why it is necessary, written as a terse clause of AT MOST 12 words.
+Keep each question under 20 words. Never fewer than ${DEEP_SUB_QUESTIONS_MIN}.
+Output ONLY valid JSON (no markdown fences) matching
 exactly: {"subQuestions": [{"question": string, "reason": string}]}`;
 
 const SYNTHESIS_SYSTEM = `You are LUMINA's Deep Search mode. You have been given a set of
@@ -69,14 +75,24 @@ async function planOnce(
   terse = false,
 ): Promise<{ subQuestions: SubQuestion[]; inTok: number; outTok: number }> {
   const msg = await anthropic.messages.create({
-    model: LLM_MODEL,
+    model: UTILITY_MODEL,
     // Room for the max number of sub-questions AND a reason for each. This was
     // 1500 and still truncated in production ("Unterminated string at position
     // 1402"), which surfaces as a JSON parse error and hides the fact that it
     // is really a budget problem.
     max_tokens: 2500,
-    system: terse ? `${PLAN_SYSTEM}\n\nKeep each "reason" under 12 words.` : PLAN_SYSTEM,
+    // The retry drops reasons entirely. The default is already terse, so if
+    // that overran its budget, trimming further is the only lever left that
+    // still returns a usable plan.
+    system: terse ? `${PLAN_SYSTEM}\n\nOmit "reason" entirely. Questions only.` : PLAN_SYSTEM,
     messages: [{ role: "user", content: query }],
+    // The synthesis calls have always set this; the planner did not, and it
+    // was the slowest single call in a deep run at ~8s against a 4s target.
+    // Decomposing a question into sub-questions is a structuring task, not a
+    // reasoning-heavy one -- there is nothing here worth thinking at length
+    // about, and the plan is the user's first paint, so the wait is the most
+    // visible in the product.
+    ...effortLow(UTILITY_MODEL),
   });
   const text = msg.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -364,7 +380,7 @@ export async function runDeepLoop(
       max_tokens: 2048,
       system: SYNTHESIS_SYSTEM,
       messages: [...(await loadThreadHistory(threadId, userId)), { role: "user", content: userContent }],
-      ...({ output_config: { effort: "low" } } as Record<string, unknown>),
+      ...effortLow(LLM_MODEL),
     });
     stream.on("text", (delta) => {
       if (!ttftMs) ttftMs = Date.now() - start;
