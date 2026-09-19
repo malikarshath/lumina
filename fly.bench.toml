@@ -1,0 +1,19 @@
+# The benchmark harness, in the same region as the gateway.
+#
+# No [http_service]: this app serves nothing and needs no public IP. It is a
+# place to run a command from, and it should be destroyed once the numbers are
+# captured.
+
+app = "lumina-bench-malik"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile.bench"
+
+[processes]
+  app = "sleep infinity"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  processes = ["app"]

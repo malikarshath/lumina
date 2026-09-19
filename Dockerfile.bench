@@ -1,0 +1,33 @@
+# A throwaway harness machine, deployed next to the gateway.
+#
+# Why: `202 accept p95` and `ttft p95` are measured by the client, so running
+# the bench from a laptop in India against us-west-2 measures the Pacific as
+# much as the system. The same upload measured 1182ms from the laptop and
+# 236ms from inside sjc -- same code, same gateway, same payload. Putting the
+# harness in the same region reports the system's latency instead of the
+# tester's broadband.
+#
+# This is NOT localhost. Requests still cross the public internet, real DNS,
+# real TLS, through the real gateway. It only removes the tester's distance.
+#
+# The bench imports nothing but Node builtins, so there is no install step.
+#
+#   fly apps create lumina-bench-malik
+#   fly deploy -c fly.bench.toml --depot=false
+#   fly ssh console -a lumina-bench-malik -C "node benchmark/bench.mjs --target https://lumina-gateway-malik.fly.dev"
+#   fly apps destroy lumina-bench-malik --yes
+FROM node:22-slim
+WORKDIR /app
+
+COPY benchmark benchmark
+COPY eval eval
+COPY quality quality
+COPY expectations.json ./
+
+# Somewhere to write reports/bench.json; nothing here is persisted, the
+# results are read off stdout or copied out before the app is destroyed.
+RUN mkdir -p reports runs
+
+# Idle until we ssh in and run something. The machine exists to be a location,
+# not a service.
+CMD ["sleep", "infinity"]

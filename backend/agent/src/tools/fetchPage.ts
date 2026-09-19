@@ -44,7 +44,14 @@ export async function fetchPage(url: string, maxChars = FETCH_MAX_CHARS): Promis
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&[a-z]+;/gi, " ")
+      // Numeric entities too, not just named ones. `&[a-z]+;` leaves `&#8217;`
+      // sitting in the text, and since the grounding check normalises by
+      // keeping [a-z0-9], that becomes a literal token "8217" in the snippet
+      // we publish -- a token that cannot appear in anyone else's extraction
+      // of the same page. It only takes one to break the run of consecutive
+      // tokens the check looks for, which is how honest citations were
+      // scoring as ungrounded.
+      .replace(/&[a-z#0-9]+;/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
